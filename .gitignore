@@ -1,0 +1,52 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# C/C++ build products
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+*.o
+*.so
+*.a
+*.dylib
+*.exe
+
+# Logs and runtime files
+*.log
+logs/
+tmp/
+temp/
+*.pid
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+id_rsa
+id_dsa
+
+# Generated files
+dist/
+target/
+out/
