@@ -1,0 +1,6 @@
+# NGPS observing list (space-delimited)
+NAME             RA         DECL       COMMENT             PRIORITY  MAGNITUDE  MAGFILTER  EXPTIME
+HZ_Her           272.6170   30.8061    X-ray binary        1         8.9        V          600
+NGC_6543         269.6392   66.6331    Cat Eye Nebula      2         11.2       V          300
+M57              283.3962   33.0292    Ring Nebula         2         14.7       V          SNR 25
+Feige_110        349.9933   -5.1656    flux standard       1         11.8       V          120

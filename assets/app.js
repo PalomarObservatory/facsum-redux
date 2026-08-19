@@ -120,6 +120,11 @@ let _skyTargetMode = 'all';    // 'all' = show every target, 'selected' = show o
 let _sftpEntries  = [];        // current SFTP directory listing
 let _sftpSortCol  = 'name';   // SFTP sort column
 let _sftpSortDir  = 1;        // 1 = asc, -1 = desc
+// In-memory (not persisted) on purpose: remembers the last-browsed directory
+// across modal opens within this page load, but a page refresh should feel
+// like a reset to defaults, so it must not survive a reload the way
+// sessionStorage would.
+let _sftpLastDir  = null;
 let _amCursorX    = null;     // canvas-pixel x of mouse over airmass plot, or null
 let _amCursorY    = null;     // canvas-pixel y of mouse over airmass plot, or null
 let _amPanHours   = 0;        // airmass plot horizontal pan in UT hours
@@ -520,6 +525,7 @@ function loadTargetText(content, filename) {
 
 function clearTargetList() {
   _targets           = [];
+  _failedLines       = [];
   _ngpsMode          = false;
   _ngpsCols          = [];
   _selectedTargetIdx = null;
@@ -531,7 +537,7 @@ function clearTargetList() {
   el('clear-target-btn').disabled         = true;
   el('delete-single-target-btn').disabled = true;
   el('load-tcs-btn').disabled = true;
-  sessionStorage.removeItem('facsum_sftp_dir');
+  _sftpLastDir = null;
   renderTargetRows();
   drawSky();
   drawAirmassPlt();
@@ -1107,6 +1113,20 @@ function renderTargetRows() {
     tr.appendChild(td);
     tbody.appendChild(tr);
   }
+
+  // Table is genuinely empty — show a second, larger "+ Load Target List"
+  // invite in place of the (now-shrunk) scrollable table area, easier to
+  // notice than the small header button. Lives outside .tbl-wrap so it's
+  // centered on the pane itself, not on the table's scrollable content
+  // width (the header alone is wider than the pane, hence the horizontal
+  // scrollbar). Keyed off actual content (not _lastLoadedFilename, which
+  // only tracks named-file loads — typing text and hitting "Parse Text", or
+  // "+ Add Single Target" from a blank list, populate _targets without ever
+  // setting a filename) so it disappears whenever the table stops being
+  // empty, regardless of how that happened.
+  const isEmpty = _targets.length === 0 && _failedLines.length === 0;
+  el('tbl-wrap')?.classList.toggle('shrink', isEmpty);
+  el('no-targets-placeholder')?.classList.toggle('hidden', !isEmpty);
 
   // Build a sorted index list
   const indices = _targets.map((_, i) => i);
@@ -3145,7 +3165,8 @@ function openSftpModal() {
   el('sftp-save-bar').classList.add('hidden');
   el('sftp-open-btn').textContent = 'Open';
   el('sftp-modal').classList.remove('hidden');
-  sftp_list(sessionStorage.getItem('facsum_sftp_dir') || SFTP_START);
+  el('sftp-search').focus();
+  sftp_list(_sftpLastDir || SFTP_START);
 }
 
 function openSftpSaveModal() {
@@ -3155,7 +3176,8 @@ function openSftpSaveModal() {
   el('sftp-open-btn').textContent = 'Save Here';
   el('sftp-filename').value = _lastLoadedFilename;
   el('sftp-modal').classList.remove('hidden');
-  sftp_list(sessionStorage.getItem('facsum_sftp_dir') || SFTP_START);
+  el('sftp-search').focus();
+  sftp_list(_sftpLastDir || SFTP_START);
 }
 
 function closeSftpModal() {
@@ -3186,7 +3208,7 @@ function sftp_list(path) {
 function renderSftpList(path, entries) {
   _sftpCwd      = path;
   _sftpSelected = null;
-  sessionStorage.setItem('facsum_sftp_dir', path);
+  _sftpLastDir  = path;
   _sftpEntries  = entries;
   _sftpSortCol  = 'name';  // reset sort on new directory
   _sftpSortDir  = 1;
@@ -3329,6 +3351,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Rate units — update column headers (no re-parse needed; values don't change)
   el('rate-units').addEventListener('change', updateRateHeaders);
   updateRateHeaders();   // set headers on first load
+  renderTargetRows();    // show the "+ Load Target List" empty-state invite on first load
   el('delim-other').addEventListener('input', () => {
     // Auto-select "Other" radio when user types in the custom field
     document.querySelector('input[name="delim"][value="other"]').checked = true;
@@ -3369,6 +3392,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load / Save / Add Target buttons
   el('add-target-btn').addEventListener('click', openSftpModal);
+  el('no-targets-btn').addEventListener('click', openSftpModal);
   el('add-single-target-btn').addEventListener('click', openAddTargetModal);
   el('delete-single-target-btn').addEventListener('click', deleteSelectedTarget);
   el('clear-target-btn').addEventListener('click', clearTargetList);

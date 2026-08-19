@@ -92,15 +92,37 @@ body {
 .resize-y-handle {
   flex-shrink: 0;
   background: var(--sep);
+  border-radius: 3px;
   transition: background 0.15s;
 }
 .resize-x-handle {
   width: 5px;
   cursor: col-resize;
+  /* Panels (.panel) each carry their own 4px margin, so the telemetry+targets
+     stack and the sky-panel box both actually start/end 4px in from the row's
+     full stretched height. This handle is a plain sibling with no panel of
+     its own, so without a matching margin it stretches the full row height
+     and overhangs both ends by 4px past the panels it sits between. */
+  margin: 4px 0;
 }
 .resize-y-handle {
   height: 5px;
   cursor: row-resize;
+}
+/* Left-column handle: its panels (telemetry/targets) are two separately-
+   margined boxes inset 4px from .left-col's edges, so this handle (a plain
+   flex-column child with no margin of its own) otherwise stretches 4px
+   wider than them on each side. */
+#resize-y-handle {
+  margin: 0 4px;
+}
+/* Airmass-plot handle: unlike #resize-y-handle above, its panels (sky-wrap/
+   airmass-section) live inside one shared bordered box with no per-child
+   margin, so width-wise it's already flush with them — but "flush" here
+   means right up against #sky-panel's own border, with no breathing room.
+   Same 4px margin, purely for that visual gap. */
+#resize-am-handle {
+  margin: 0 4px;
 }
 .resize-x-handle:hover, .resize-x-handle.dragging,
 .resize-y-handle:hover, .resize-y-handle.dragging { background: #fff; }
@@ -471,7 +493,29 @@ details.hw-section:not([open]) .hw-summary::before { content: '▶  '; }
   flex-shrink: 0;
 }
 
-/* ── Parse options strip ─────────────────────────────────────────────────── */
+/* ── Parse options (collapsible) ─────────────────────────────────────────── */
+.parse-options-details {
+  border-bottom: 1px solid var(--sep);
+  flex-shrink: 0;
+}
+.parse-options-summary {
+  display: flex;
+  align-items: center;
+  background: var(--hdr-bg);
+  padding: 5px 14px;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  color: var(--orange);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.parse-options-summary::-webkit-details-marker { display: none; }
+.parse-options-summary::before { content: '▲  '; }
+details.parse-options-details:not([open]) .parse-options-summary::before { content: '▾  '; }
+
 .parse-strip {
   display: flex;
   align-items: flex-start;
@@ -646,6 +690,40 @@ details.hw-section:not([open]) .hw-summary::before { content: '▶  '; }
 #targets-tbody tr.selected:hover td { background: #3a1c00; }
 #targets-tbody tr.parse-error td    { color: var(--red); background: rgba(255,85,85,0.07); cursor: default; }
 #targets-tbody tr.parse-error:hover td { background: rgba(255,85,85,0.12); }
+
+/* Empty-state "+ Load Target List" invite — lives outside .tbl-wrap (see
+   renderTargetRows()) so it centers on the pane itself rather than on the
+   table's scrollable content width, and .tbl-wrap.shrink cedes it the
+   leftover vertical space instead of leaving it to an empty scroll area. */
+.tbl-wrap.shrink { flex: 0 0 auto; }
+
+.no-targets-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+/* Same look as #load-tcs-btn — a full-width bar, not a small pill button —
+   so this reads as the same kind of primary call-to-action. */
+.no-targets-btn {
+  display: block;
+  width: 100%;
+  background: #281800;
+  color: var(--orange);
+  border: 1px solid #5a3a00;
+  border-radius: 4px;
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 12px 0;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.no-targets-btn:hover { background: #3a2200; }
 #targets-tbl .airmass-val { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Inline cell editor — dbl-click a cell in the Targets Table to activate */
@@ -847,8 +925,20 @@ details.hw-section:not([open]) .hw-summary::before { content: '▶  '; }
 /* ── SFTP browser list ───────────────────────────────────────────────────── */
 .sftp-path {
   font-family: var(--font-mono);
-  font-size: 0.82rem;
+  font-size: 1.05rem;
+  font-weight: bold;
 }
+
+/* Bigger and higher-contrast than the generic .btn-sm it's based on — this
+   is the primary way to navigate up a directory, so it should read as an
+   obvious, easy target rather than blend in with the rest of the header. */
+#sftp-up-btn {
+  font-size: 0.95rem;
+  font-weight: bold;
+  padding: 7px 16px;
+  border: 1px solid var(--orange);
+}
+#sftp-up-btn:hover { background: var(--orange); color: var(--bg); }
 
 .sftp-list-wrap {
   flex: 1;
