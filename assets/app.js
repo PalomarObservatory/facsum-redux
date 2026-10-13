@@ -103,9 +103,41 @@ function _tip() {
   }
   return _tipEl;
 }
+// The page is zoomed via a CSS transform on <html> (see applyZoom), which
+// makes <html> the containing block for every position:fixed element —
+// #instant-tip's left/top are interpreted in that pre-transform local space,
+// not real screen pixels, so raw clientX/clientY overshoot by the zoom
+// factor once the cursor is away from the top-left corner. Divide it out
+// (same fix already applied to _atfShowTooltip's tooltip positioning).
+function _tipPos(clientX, clientY) {
+  const zoom = parseFloat(localStorage.getItem('facsum_zoom') || '1.0');
+  return { left: clientX / zoom + 14, top: clientY / zoom + 14 };
+}
+// Positions the tooltip's bottom-center `gap` px above (clientX, clientY).
+// Call after setting the tooltip's text/visibility so offsetWidth/Height
+// reflect the content actually being shown. offsetWidth/Height are already
+// in the same pre-transform local space left/top are interpreted in, so
+// (unlike clientX/clientY) they need no separate zoom compensation.
+function _tipPosAbove(clientX, clientY, gap = 10) {
+  const zoom = parseFloat(localStorage.getItem('facsum_zoom') || '1.0');
+  const tip  = _tip();
+  return {
+    left: clientX / zoom - tip.offsetWidth / 2,
+    top:  clientY / zoom - tip.offsetHeight - gap,
+  };
+}
 function attachTooltip(el, text) {
-  el.addEventListener('mouseenter', () => { _tip().textContent = text; _tip().classList.add('visible'); });
-  el.addEventListener('mousemove',  e  => { _tip().style.left = (e.clientX + 14) + 'px'; _tip().style.top = (e.clientY + 14) + 'px'; });
+  el.addEventListener('mouseenter', () => {
+    const tip = _tip();
+    tip.textContent = text;
+    tip.style.color = tip.style.borderColor = '';   // clear any color-coding left by other tooltip uses (e.g. sky markers)
+    tip.classList.add('visible');
+  });
+  el.addEventListener('mousemove',  e  => {
+    const p = _tipPos(e.clientX, e.clientY);
+    _tip().style.left = p.left + 'px';
+    _tip().style.top  = p.top  + 'px';
+  });
   el.addEventListener('mouseleave', () => { _tip().classList.remove('visible'); });
 }
 
@@ -115,8 +147,193 @@ let _ngpsCols    = [];        // column names from NGPS header (uppercase)
 let _failedLines = [];        // raw lines that failed to parse
 let _sortCol          = null;  // currently sorted column key, or null
 let _sortDir          = 1;    // 1 = ascending, -1 = descending
-let _selectedTargetIdx = null; // index into _targets of the selected row, or null
-let _skyTargetMode = 'all';    // 'all' = show every target, 'selected' = show only the selected target
+let _targetSearchQuery = '';  // lowercased filter text from #target-search
+
+// ── Target table — draggable column order ────────────────────────────────────
+// Persisted so a user's preferred column layout survives page reloads, same
+// pattern as the zoom/allsky-calibration settings below.
+const COL_ORDER_KEY     = 'facsum_target_col_order';
+const DEFAULT_COL_ORDER = ['name', 'ra', 'dec', 'epoch', 'airmass', 'pmRA', 'pmDec', 'propRA', 'propDec', 'notes', 'ngpsPriority', 'ngpsMag'];
+let _dragCol = null;   // data-col of the header currently being dragged, or null
+
+function loadColOrder() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COL_ORDER_KEY) || 'null');
+    if (Array.isArray(saved) && saved.length) {
+      // Keep only columns we still know about, then append any columns
+      // (e.g. added in a later version) missing from the saved order.
+      const merged = saved.filter(c => DEFAULT_COL_ORDER.includes(c));
+      for (const c of DEFAULT_COL_ORDER) if (!merged.includes(c)) merged.push(c);
+      return merged;
+    }
+  } catch { /* ignore malformed saved order */ }
+  return DEFAULT_COL_ORDER.slice();
+}
+let _colOrder = loadColOrder();
+
+// Re-appends a header/body row's data-col cells in _colOrder sequence. The
+// one cell with no data-col (the ✓ observed column) is never touched, so it
+// stays pinned in place regardless of where the loop below moves everything
+// else — appendChild() moves an existing node rather than cloning it, so
+// this reorders in place without rebuilding any cell content or listeners.
+function applyColumnOrder(row) {
+  const cells = Array.from(row.children).filter(c => c.dataset.col);
+  const byCol = new Map(cells.map(c => [c.dataset.col, c]));
+  for (const col of _colOrder) {
+    const cell = byCol.get(col);
+    if (cell) row.appendChild(cell);
+  }
+}
+
+function reorderColumn(sourceCol, targetCol) {
+  const from = _colOrder.indexOf(sourceCol);
+  const to   = _colOrder.indexOf(targetCol);
+  if (from === -1 || to === -1 || from === to) return;
+  _colOrder.splice(from, 1);
+  _colOrder.splice(_colOrder.indexOf(targetCol), 0, sourceCol);
+  localStorage.setItem(COL_ORDER_KEY, JSON.stringify(_colOrder));
+  renderTargetRows();
+}
+
+function initColumnDragReorder() {
+  const theadTr = document.querySelector('#targets-tbl thead tr');
+  if (!theadTr) return;
+
+  theadTr.addEventListener('dragstart', e => {
+    const th = e.target.closest('th[data-col]');
+    if (!th) return;
+    _dragCol = th.dataset.col;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', _dragCol);  // Firefox requires data to be set to allow the drag
+    th.classList.add('col-dragging');
+  });
+
+  theadTr.addEventListener('dragover', e => {
+    const th = e.target.closest('th[data-col]');
+    if (!th || !_dragCol || th.dataset.col === _dragCol) return;
+    e.preventDefault();   // required to allow a drop
+    th.classList.add('col-drop-target');
+  });
+
+  theadTr.addEventListener('dragleave', e => {
+    e.target.closest('th[data-col]')?.classList.remove('col-drop-target');
+  });
+
+  theadTr.addEventListener('drop', e => {
+    const th = e.target.closest('th[data-col]');
+    e.preventDefault();
+    th?.classList.remove('col-drop-target');
+    if (!th || !_dragCol) return;
+    reorderColumn(_dragCol, th.dataset.col);
+  });
+
+  theadTr.addEventListener('dragend', () => {
+    theadTr.querySelectorAll('.col-dragging, .col-drop-target')
+      .forEach(t => t.classList.remove('col-dragging', 'col-drop-target'));
+    _dragCol = null;
+  });
+}
+let _selectedTargetIdx = null; // "primary" selection: the most recently (de)selected row, or null. Drives
+                                // single-target-only actions (Load to Telescope, cell-format sync, LOADED TARGET display).
+let _selectedTargetIndices = []; // ordered (by selection order, not index order) list of every multi-selected row.
+                                  // Kept in sync with _selectedTargetIdx (always its last element, or [] when null).
+                                  // Drives the airmass plot / sky-path overlays and Delete Selected/Ctrl+click.
+let _skyTargetMode = 'all';    // 'all' = show every target, 'selected' = show only the selected target(s)
+let _selectionAnchorIdx = null; // range-select anchor (the last row clicked WITHOUT shift) — stays fixed
+                                 // across repeated Shift+clicks so each one re-draws the range from the
+                                 // same starting point, matching standard file-manager/spreadsheet behavior.
+let _lastRenderedIndices = [];  // _targets indices in the table's current on-screen (sorted) row order —
+                                 // Shift+click ranges span *visual* rows, not raw _targets array position.
+
+// Plain click selects/deselects a single row; Ctrl/Cmd+click toggles a row's
+// membership in a multi-selection without disturbing the rest. Selection
+// order (not table order) drives color assignment in drawSky/drawAirmassPlt,
+// so a target keeps its color for as long as it's selected regardless of
+// what else gets toggled around it.
+function toggleTargetSelection(idx, additive) {
+  if (additive) {
+    const pos = _selectedTargetIndices.indexOf(idx);
+    if (pos === -1) _selectedTargetIndices.push(idx);
+    else _selectedTargetIndices.splice(pos, 1);
+  } else {
+    _selectedTargetIndices = (_selectedTargetIndices.length === 1 && _selectedTargetIndices[0] === idx) ? [] : [idx];
+  }
+  _selectedTargetIdx = _selectedTargetIndices.length ? _selectedTargetIndices[_selectedTargetIndices.length - 1] : null;
+}
+
+// Shift+click: selects every row visually between _selectionAnchorIdx and
+// clickedIdx (inclusive), in the table's current sort order — not the raw
+// _targets index order, which would pick the wrong rows whenever the table
+// is sorted. `additive` (Shift+Ctrl / Shift+Cmd) unions the range into the
+// existing selection instead of replacing it, mirroring how Ctrl/Cmd already
+// behaves for a single row.
+function selectTargetRange(anchorIdx, clickedIdx, additive) {
+  let order = _lastRenderedIndices.length ? _lastRenderedIndices : _targets.map((_, i) => i);
+  // Skip rows the name filter is currently hiding — "everything visually
+  // between these two rows" should mean what's on screen, not rows a search
+  // query has hidden out of view.
+  if (_targetSearchQuery) order = order.filter(i => (_targets[i].name || '').toLowerCase().includes(_targetSearchQuery));
+  const posA = order.indexOf(anchorIdx);
+  const posB = order.indexOf(clickedIdx);
+  const range = (posA === -1 || posB === -1)
+    ? [clickedIdx]   // anchor no longer exists (e.g. list changed) — fall back to just the clicked row
+    : order.slice(Math.min(posA, posB), Math.max(posA, posB) + 1);
+  if (additive) {
+    for (const i of range) if (!_selectedTargetIndices.includes(i)) _selectedTargetIndices.push(i);
+  } else {
+    _selectedTargetIndices = range;
+  }
+  _selectedTargetIdx = clickedIdx;
+}
+
+// Accent colors for multi-selected targets' curves/paths/dots, assigned by
+// selection order. A lone selection instead keeps the original '#ffe0aa'
+// gold highlight, for visual continuity with the pre-multi-select look.
+const MULTI_SELECT_PALETTE = ['#8be9fd', '#ff79c6', '#50fa7b', '#f1fa8c', '#bd93f9', '#ffb86c', '#ff5555', '#f0be3c'];
+function selectedTargetColor(orderIdx, totalSelected) {
+  return totalSelected > 1 ? MULTI_SELECT_PALETTE[orderIdx % MULTI_SELECT_PALETTE.length] : '#ffe0aa';
+}
+// Dimmed variant used for a selected target's not-currently-usable curve/path
+// segments. A lone selection keeps the original neutral gray; 2+ selections
+// use each target's own hue (at low alpha) so a faded segment still reads as
+// "which target" rather than all targets fading to the same indistinguishable gray.
+function selectedTargetDimColor(orderIdx, totalSelected) {
+  if (totalSelected <= 1) return 'rgba(130,130,150,0.45)';
+  return hexToRgba(MULTI_SELECT_PALETTE[orderIdx % MULTI_SELECT_PALETTE.length], 0.3);
+}
+function hexToRgba(hex, alpha) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+
+// Keeps a target-list row's highlight in sync with that target's assigned
+// curve/path color (selectedTargetColor), so the same target reads as the
+// same color across the table, the airmass plot and the sky display. A lone
+// selection is left on the original hardcoded gold background (see the
+// plain '.selected' CSS rule) for visual continuity with the pre-multi-select
+// look; only 2+ selections get a per-row tinted background via CSS variables.
+function applyRowSelectionStyle(tr, idx) {
+  if (!tr) return;
+  const selPos = _selectedTargetIndices.indexOf(idx);
+  const total  = _selectedTargetIndices.length;
+  if (selPos === -1) {
+    tr.classList.remove('selected', 'multi');
+    tr.style.removeProperty('--row-sel-bg');
+    tr.style.removeProperty('--row-sel-bg-hover');
+    return;
+  }
+  tr.classList.add('selected');
+  if (total > 1) {
+    const color = selectedTargetColor(selPos, total);
+    tr.classList.add('multi');
+    tr.style.setProperty('--row-sel-bg', hexToRgba(color, 0.24));
+    tr.style.setProperty('--row-sel-bg-hover', hexToRgba(color, 0.36));
+  } else {
+    tr.classList.remove('multi');
+    tr.style.removeProperty('--row-sel-bg');
+    tr.style.removeProperty('--row-sel-bg-hover');
+  }
+}
 let _sftpEntries  = [];        // current SFTP directory listing
 let _sftpSortCol  = 'name';   // SFTP sort column
 let _sftpSortDir  = 1;        // 1 = asc, -1 = desc
@@ -134,9 +351,18 @@ let _amNightSpan  = 12;       // last night duration in hours (for drag-to-pan s
 let _amDragStartX = null;     // x pixel at mousedown (null when not pressed)
 let _amDragPanAt  = 0;        // _amPanHours value at drag start
 let _amDragging   = false;    // true once drag threshold exceeded
+let _amHoverUT    = null;     // UT-hours-past-jd0-midnight under the airmass cursor, or null
+// Parallactic-angle overlay on the airmass plot. Off on every page load, and
+// deliberately NOT persisted — it matches the other display toggles (AllSky,
+// Labels, Moon, Sun & Planets), which all reset to their defaults on reload.
+// Only workstation configuration (zoom, column order, all-sky calibration) is
+// remembered. An earlier version did persist this, which meant an observer who
+// switched it on once got it back every night whether they wanted it or not.
+let _showParallactic = false;
 let _skyZoom      = 1.0;      // sky display zoom factor (1 = full view)
 let _skyPanX      = 0.0;      // sky pan, x, in units of base R
 let _skyPanY      = 0.0;      // sky pan, y, in units of base R
+let _skyMarkers   = [];       // [{x, y, label}] hit-test targets for canvas-pixel hover tooltips, rebuilt every drawSky()
 
 function toggleConnection() {
   if (_connected) {
@@ -479,11 +705,16 @@ function detectAndApplyBestFormat(content) {
 
   // Every combination, ordered so that earlier entries win ties.
   // PTIC is listed first so it is preferred when scores are equal.
+  // delimRadio must match a literal <input value="…"> in index.php exactly.
+  // HTML attribute text has no escape sequences, so value="\t" there is the
+  // two characters backslash+t, never an actual tab — comparing against a JS
+  // '\t' (a real tab char) silently never matches. Use the 'tab' sentinel,
+  // not '\t', or the radio-button sync below throws on a null querySelector.
   const candidates = [
     { isPTIC: true,  delim: null,  ftype: 'ptic', delimRadio: 'auto', delimOther: '',  label: 'PTIC'          },
     { isPTIC: false, delim: ',',   ftype: 'csv',  delimRadio: ',',    delimOther: '',  label: 'CSV comma'      },
     { isPTIC: false, delim: ';',   ftype: 'csv',  delimRadio: ';',    delimOther: '',  label: 'CSV semicolon'  },
-    { isPTIC: false, delim: /\t/,  ftype: 'csv',  delimRadio: '\t',   delimOther: '',  label: 'CSV tab'        },
+    { isPTIC: false, delim: /\t/,  ftype: 'csv',  delimRadio: 'tab',  delimOther: '',  label: 'CSV tab'        },
     { isPTIC: false, delim: /\s+/, ftype: 'csv',  delimRadio: ' ',    delimOther: '',  label: 'CSV space'      },
     { isPTIC: false, delim: '|',   ftype: 'csv',  delimRadio: 'other',delimOther: '|', label: 'CSV pipe'       },
   ];
@@ -529,6 +760,8 @@ function clearTargetList() {
   _ngpsMode          = false;
   _ngpsCols          = [];
   _selectedTargetIdx = null;
+  _selectedTargetIndices = [];
+  _selectionAnchorIdx = null;
   _lastLoadedFilename = '';
   el('targets-text').value         = '';
   el('parse-detected').textContent = '';
@@ -569,7 +802,7 @@ function getFormatInfo(content) {
     if (delim === 'other') d = el('delim-other').value || '|';
     else if (delim !== 'auto') d = delim;
     el('parse-detected').textContent = 'CSV format';
-    return { isPTIC: false, delim: d === '\t' ? /\t/ : d };
+    return { isPTIC: false, delim: d === 'tab' ? /\t/ : d };
   }
 
   // Auto ftype — respect explicit delimiter selection first
@@ -580,12 +813,12 @@ function getFormatInfo(content) {
   }
 
   if (delim !== 'auto') {
-    const labels = { ',': 'comma', ';': 'semicolon', '\t': 'tab', ' ': 'space' };
+    const labels = { ',': 'comma', ';': 'semicolon', tab: 'tab', ' ': 'space' };
     el('parse-detected').textContent = `delimiter: ${labels[delim] || delim}`;
     // Space delimiter explicitly chosen → space-delimited CSV (RA/Dec must use
     // colons internally per the spec; name must contain no spaces)
     if (delim === ' ') return { isPTIC: false, delim: /\s+/ };
-    return { isPTIC: false, delim: delim === '\t' ? /\t/ : delim };
+    return { isPTIC: false, delim: delim === 'tab' ? /\t/ : delim };
   }
 
   // Auto-detect delimiter from sample lines
@@ -709,14 +942,32 @@ function parseNGPS(rawLine, cols) {
   if (nameIdx < 0 || raIdx < 0 || declIdx < 0) return null;
 
   const name = fields[nameIdx] || '';
-  if (!name || !looksNumeric(fields[raIdx])) return null;  // skip header rows
+  if (!name) return null;
 
-  const raDeg  = parseFloat(fields[raIdx]);
-  const decDeg = parseFloat(fields[declIdx]);
-  if (isNaN(raDeg) || isNaN(decDeg)) return null;
+  // RA/DECL arrive in one of two notations: decimal degrees (the original
+  // NGPS convention — see User_Manual/screenshot_harness/targets/ngps_demo.list)
+  // or sexagesimal HH:MM:SS / ±DD:MM:SS, which some list generators emit
+  // instead. Detect per line and normalize both to the sexagesimal form the
+  // rest of the app works in. Requiring a bare number here (the old
+  // header-row guard) rejected every sexagesimal line outright; merely
+  // dropping that guard would be worse, since parseFloat('16:31:33.8')
+  // silently yields 16 *degrees* — RA 01:04 instead of 16 hours.
+  const rawRA  = (fields[raIdx]   || '').trim();
+  const rawDec = (fields[declIdx] || '').trim();
+  const sexCoords = looksLikeSexagesimal(rawRA) && looksLikeSexagesimal(rawDec);
 
-  const ra    = degToSexRA(raDeg);
-  const dec   = degToSexDec(decDeg);
+  let ra, dec;
+  if (sexCoords) {
+    ra  = fmtSex(rawRA,  false);
+    dec = fmtSex(rawDec, true);
+  } else {
+    if (!looksNumeric(rawRA)) return null;   // header row / unrecognized notation
+    const raDeg  = parseFloat(rawRA);
+    const decDeg = parseFloat(rawDec);
+    if (isNaN(raDeg) || isNaN(decDeg)) return null;
+    ra  = degToSexRA(raDeg);
+    dec = degToSexDec(decDeg);
+  }
   const epoch = '2000';
 
   const get = (colName) => {
@@ -782,6 +1033,7 @@ function parseNGPS(rawLine, cols) {
     ngps: { comment, priority, magnitude, magfilter, exptime },
     _fmt: { ftype: 'auto', delim: 'auto', label: 'NGPS' },
     _ngpsUseComma: useComma,
+    _ngpsSexCoords: sexCoords,
   };
 }
 
@@ -795,16 +1047,43 @@ function parsePTIC(rawLine) {
   const { data, notes: inlineNotes } = stripComment(rawLine);
   if (!data.trim()) return null;
 
-  const name   = data.substring(0, 17).trim();
-  const tokens = data.substring(17).trim().split(/\s+/).filter(Boolean);
+  // The name/data boundary is wherever the name's padding ends — found from
+  // the whitespace itself (first run of 2+ literal spaces), not a fixed
+  // character offset. Real PTIC-like files vary this column width in
+  // practice (16, 17, 18 chars all seen across different sources) even
+  // though the spec nominally says 17; a hardcoded cutoff either steals a
+  // real digit from the coordinates (cutoff too wide — e.g. "HIP14719"
+  // padded to a 16-char column, then cut at 17, grabbed the "0" off "03 10
+  // 08.84" and appended it to the name) or splits a multi-word name (too
+  // narrow). A single space is never treated as the boundary since that's
+  // how a name's own words are separated (e.g. "BD+28 4211", "HZ Her") —
+  // only deliberate column padding (2+ spaces) marks where the coordinate
+  // data actually starts.
+  const gap = data.match(/ {2,}/);
+  if (!gap) return null;
+  const name = data.substring(0, gap.index).trim();
+  // Split on literal spaces only (per spec — PTIC is space-tokenized), not
+  // \s+ (which also matches tabs). Otherwise a tab-delimited CSV line, once
+  // its name/data split lands mid-field, can have its embedded tab
+  // characters treated as token separators too, occasionally yielding 6
+  // numeric-looking fragments that pass as a false-positive PTIC match.
+  const tokens = data.substring(gap.index).trim().split(/ +/).filter(Boolean);
 
   if (tokens.length < 6) return null;
-  if (!looksLikeCoord(tokens[0])) return null;   // header row
+  // Each of the 6 RA/Dec components must be a bare number per the PTIC spec
+  // (space-tokenized H/M/S D/M/S). looksLikeCoord only checks that the first
+  // character is a digit/sign, which is too loose here: a long CSV Notes
+  // field can glue enough extra words onto the truncated tail of a
+  // comma-delimited line (past the fixed 17-char name cut) to reach 6+
+  // tokens whose first token merely *starts* with a digit — e.g.
+  // "3,-08:21:08.63,2000.0,Requested" — silently misparsing a well-formed
+  // CSV row as PTIC and scrambling it across the RA/Dec/Notes columns.
+  if (!tokens.slice(0, 6).every(looksNumeric)) return null;   // header row / not PTIC
 
   const ra  = `${tokens[0]}:${tokens[1]}:${tokens[2]}`;
   const dec = `${tokens[3]}:${tokens[4]}:${tokens[5]}`;
 
-  let epoch = '2000', pmRA = '', pmDec = '';
+  let epoch = '2000', pmRA = '', pmDec = '', propRA = '', propDec = '';
   const extra = [];
   for (let i = 6; i < tokens.length; i++) {
     const t = tokens[i];
@@ -812,6 +1091,13 @@ function parsePTIC(rawLine) {
       const vals = t.slice(3).split(',');
       pmRA  = vals[0] || '';
       pmDec = vals[1] || '';
+    } else if (/^prop=/i.test(t)) {
+      // Not part of the original PTIC spec — a same-shaped extension mirroring
+      // pm=, so true proper motion (mas/yr) round-trips through edits to the
+      // Prop RA/Dec table columns instead of silently vanishing on save.
+      const vals = t.slice(5).split(',');
+      propRA  = vals[0] || '';
+      propDec = vals[1] || '';
     } else if (looksLikeEpoch(t)) {
       epoch = t;
     } else {
@@ -820,7 +1106,7 @@ function parsePTIC(rawLine) {
   }
 
   const notes = [inlineNotes, extra.join(' ')].filter(Boolean).join(' ');
-  return { name, ra, dec, epoch, pmRA, pmDec, notes };
+  return { name, ra, dec, epoch, pmRA, pmDec, propRA, propDec, notes };
 }
 
 // Parse CSV-format line (Section 10 spec).
@@ -971,6 +1257,8 @@ function parseTextToTable() {
   _failedLines       = [];
   _sortCol           = null;   // reset sort on new file load
   _selectedTargetIdx = null;
+  _selectedTargetIndices = [];
+  _selectionAnchorIdx = null;
   updateLoadTcsBtn();
   updateSelectedDisplay();
 
@@ -1055,7 +1343,7 @@ function computeAirmass(t, lst_h) {
   while (ha_h >  12) ha_h -= 24;
   while (ha_h < -12) ha_h += 24;
   const { alt } = haDecToAltAz(ha_h, dec_d);
-  if (alt <= 6.5) return Infinity;
+  if (alt <= SKY_HORIZON_ALT_DEG) return Infinity;
   return 1 / Math.sin(alt * Math.PI / 180);
 }
 
@@ -1078,6 +1366,7 @@ function syncTableHeaders() {
         th.id           = id;
         th.dataset.col  = col;
         th.textContent  = label;
+        th.draggable    = true;
         th.addEventListener('click', () => {
           if (_sortCol === col) {
             _sortDir === -1 ? (_sortCol = null) : (_sortDir = -1);
@@ -1095,6 +1384,8 @@ function syncTableHeaders() {
     el('th-ngps-priority')?.remove();
     el('th-ngps-mag')?.remove();
   }
+
+  applyColumnOrder(document.querySelector('#targets-tbl thead tr'));
 }
 
 function renderTargetRows() {
@@ -1143,6 +1434,8 @@ function renderTargetRows() {
         case 'epoch':        va = parseFloat(a.epoch)  || 0;  vb = parseFloat(b.epoch)  || 0;  break;
         case 'pmRA':         va = parseFloat(a.pmRA)   || 0;  vb = parseFloat(b.pmRA)   || 0;  break;
         case 'pmDec':        va = parseFloat(a.pmDec)  || 0;  vb = parseFloat(b.pmDec)  || 0;  break;
+        case 'propRA':       va = parseFloat(a.propRA)  || 0;  vb = parseFloat(b.propRA)  || 0;  break;
+        case 'propDec':      va = parseFloat(a.propDec) || 0;  vb = parseFloat(b.propDec) || 0;  break;
         case 'notes':        va = a.notes || ''; vb = b.notes || ''; break;
         case 'airmass':      va = computeAirmass(a, lst_h); vb = computeAirmass(b, lst_h); break;
         case 'ngpsPriority': va = parseFloat(a.ngps?.priority) || Infinity;
@@ -1155,9 +1448,10 @@ function renderTargetRows() {
       return _sortDir * (va - vb);
     });
   }
+  _lastRenderedIndices = indices;   // current on-screen row order, for Shift+click range-select
 
   for (const idx of indices) {
-    const { name, ra, dec, epoch, pmRA, pmDec, notes } = _targets[idx];
+    const { name, ra, dec, epoch, pmRA, pmDec, propRA, propDec, notes } = _targets[idx];
     const conv = _targets[idx]._converted || {};
     const tr = document.createElement('tr');
 
@@ -1209,13 +1503,19 @@ function renderTargetRows() {
     amCell.className         = 'airmass-val dim';
     amCell.textContent       = '—';
     amCell.dataset.targetIdx = idx;
+    amCell.dataset.col       = 'airmass';
     tr.appendChild(amCell);
-    // Standard trailing columns (pmRA, pmDec = Offset RA/Dec in NGPS mode; notes = Comment)
-    [['pmRA', pmRA], ['pmDec', pmDec], ['notes', notes]].forEach(([col, val]) => {
+    // Standard trailing columns (pmRA, pmDec = Offset RA/Dec in NGPS mode;
+    // propRA/propDec = true proper motion in mas/yr — shown for reference in
+    // NGPS mode too, but not editable there since that format has no field
+    // to round-trip it into; notes = Comment)
+    [['pmRA', pmRA], ['pmDec', pmDec], ['propRA', propRA], ['propDec', propDec], ['notes', notes]].forEach(([col, val]) => {
       const td = document.createElement('td');
       td.textContent = val || '';
       td.dataset.col = col;
-      bindCellEdit(td, idx, col);
+      const isProp = col === 'propRA' || col === 'propDec';
+      if (isProp && _ngpsMode) td.classList.add('dim');
+      else bindCellEdit(td, idx, col);
       tr.appendChild(td);
     });
     // NGPS-specific extra columns
@@ -1230,38 +1530,70 @@ function renderTargetRows() {
         tr.appendChild(td);
       });
     }
-    if (idx === _selectedTargetIdx)   tr.classList.add('selected');
+    applyRowSelectionStyle(tr, idx);
     if (_targets[idx]._observed)      tr.classList.add('observed');
-    tr.addEventListener('click', e => {
-      // e.detail is the native click-count for this event; ignore the two
-      // leading clicks of a double-click so cell-edit (dblclick) doesn't
-      // also toggle row selection off right as editing starts.
-      if (e.detail > 1) return;
-      _selectedTargetIdx = (_selectedTargetIdx === idx) ? null : idx;
-      document.querySelectorAll('#targets-tbody tr').forEach(r => r.classList.remove('selected'));
-      if (_selectedTargetIdx !== null) {
-        document.querySelectorAll('#targets-tbody .airmass-val').forEach(cell => {
-          if (parseInt(cell.dataset.targetIdx, 10) === _selectedTargetIdx)
-            cell.closest('tr').classList.add('selected');
-        });
+    const selectRow = (additive, rangeSelect) => {
+      if (rangeSelect && _selectionAnchorIdx !== null) {
+        selectTargetRange(_selectionAnchorIdx, idx, additive);
+      } else {
+        toggleTargetSelection(idx, additive);
+        _selectionAnchorIdx = idx;
       }
+      document.querySelectorAll('#targets-tbody .airmass-val').forEach(cell => {
+        applyRowSelectionStyle(cell.closest('tr'), parseInt(cell.dataset.targetIdx, 10));
+      });
       applyTargetFormat(_selectedTargetIdx);
       updateLoadTcsBtn();
       updateDeleteBtn();
       drawSky();
       drawAirmassPlt();
+    };
+    tr.addEventListener('click', e => {
+      // e.detail is the native click-count for this event; ignore the two
+      // leading clicks of a double-click so cell-edit (dblclick) doesn't
+      // also toggle row selection off right as editing starts.
+      if (e.detail > 1) return;
+      selectRow(e.ctrlKey || e.metaKey, e.shiftKey);
     });
+    // macOS treats Ctrl+click as a secondary/right click at the OS level —
+    // Chrome (and Safari) never dispatch a 'click' event for it at all, only
+    // 'contextmenu', regardless of what the page does. Cmd+click is
+    // unaffected and already handled above via the normal 'click' listener;
+    // this is purely to make Ctrl+click usable as a multi-select modifier on
+    // macOS too, matching the behavior Windows/Linux already get for free.
+    tr.addEventListener('contextmenu', e => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      selectRow(true, e.shiftKey);
+    });
+    applyColumnOrder(tr);
     tbody.appendChild(tr);
   }
 
   updateSortIndicators();
   updateAirmass();
   updateDeleteBtn();
+  applyTargetSearchFilter();
+}
+
+// Hides target rows whose name doesn't match the current #target-search text.
+// Runs after every render (so it stays applied through re-sorts, parses,
+// edits, etc.) rather than being threaded through renderTargetRows' own
+// indices — the table markup already carries a name cell per row, so a
+// second DOM pass is simpler than special-casing the render loop.
+function applyTargetSearchFilter() {
+  const query = _targetSearchQuery;
+  document.querySelectorAll('#targets-tbody tr').forEach(tr => {
+    const nameCell = tr.querySelector('td[data-col="name"]');
+    if (!nameCell) return;   // e.g. a "Failed to Parse" row — always show
+    const name = nameCell.textContent.toLowerCase();
+    tr.style.display = (!query || name.includes(query)) ? '' : 'none';
+  });
 }
 
 function updateDeleteBtn() {
   const btn = el('delete-single-target-btn');
-  if (btn) btn.disabled = (_selectedTargetIdx === null);
+  if (btn) btn.disabled = _selectedTargetIndices.length === 0;
 }
 
 function updateSelectedDisplay() {
@@ -1273,12 +1605,17 @@ function updateSelectedDisplay() {
 }
 
 function deleteSelectedTarget() {
-  if (_selectedTargetIdx === null) return;
-  const lineNum = _targets[_selectedTargetIdx]._lineNum;
-  if (lineNum === undefined) return;
+  if (_selectedTargetIndices.length === 0) return;
+  // Descending line-number order so each splice doesn't shift the line
+  // numbers of targets still waiting to be removed.
+  const lineNums = _selectedTargetIndices
+    .map(idx => _targets[idx]?._lineNum)
+    .filter(n => n !== undefined)
+    .sort((a, b) => b - a);
+  if (!lineNums.length) return;
   const ta    = el('targets-text');
   const lines = ta.value.split('\n');
-  lines.splice(lineNum, 1);
+  for (const n of lineNums) lines.splice(n, 1);
   ta.value = lines.join('\n');
   loadTargetText(ta.value, _lastLoadedFilename);
 }
@@ -1364,7 +1701,7 @@ function cellValidate(col, value, target) {
   if (col === 'ra')    return _atfValidateRA(value);
   if (col === 'dec')   return _atfValidateDec(value);
   if (col === 'epoch') return _atfValidateEpoch(value);
-  if (col === 'pmRA' || col === 'pmDec') return _atfValidateRate(value);
+  if (col === 'pmRA' || col === 'pmDec' || col === 'propRA' || col === 'propDec') return _atfValidateRate(value);
   if (col === 'name') {
     if (!value) return 'Name is required';
     const isPTIC = !_ngpsMode && target._fmt && target._fmt.ftype === 'ptic';
@@ -1438,6 +1775,8 @@ function commitCellEdit(idx, col, value) {
   _sortDir = savedSortDir;
   const restored = _targets.findIndex(t => t._lineNum === lineNum);
   _selectedTargetIdx = restored >= 0 ? restored : null;
+  _selectedTargetIndices = restored >= 0 ? [restored] : [];   // editing a cell collapses any multi-selection to just this row
+  _selectionAnchorIdx = _selectedTargetIdx;
 
   renderTargetRows();
   applyTargetFormat(_selectedTargetIdx);
@@ -1464,6 +1803,7 @@ function serializePTICLine(target) {
   const tokens = [ra[0], ra[1], ra[2], dec[0], dec[1], dec[2]].map(t => t ?? '');
   tokens.push(target.epoch || '2000');
   if (target.pmRA || target.pmDec) tokens.push(`pm=${target.pmRA || '0'},${target.pmDec || '0'}`);
+  if (target.propRA || target.propDec) tokens.push(`prop=${target.propRA || '0'},${target.propDec || '0'}`);
   let line = name + tokens.join(' ');
   if (target.notes) line += ' !' + target.notes;
   return line;
@@ -1501,13 +1841,18 @@ function serializeCSVLine(target) {
 // COMMENT is still emitted as an empty field (not omitted) so column count
 // stays correct for _ngpsCols-driven positional parsing.
 function serializeNGPSLine(target, cols) {
+  // Coordinates go back out in whatever notation this line came in as
+  // (_ngpsSexCoords, set by parseNGPS) — a file written in sexagesimal
+  // shouldn't have the one line the operator edited silently rewritten in
+  // decimal degrees while every line around it stays sexagesimal.
+  const sexCoords = target._ngpsSexCoords;
   const raDeg  = sexDec(target.ra)  * 15;
   const decDeg = sexDec(target.dec);
   const ng = target.ngps || {};
   const fieldFor = col => ({
     NAME:       target.name || '',
-    RA:         isFinite(raDeg)  ? raDeg.toFixed(6)  : '',
-    DECL:       isFinite(decDeg) ? decDeg.toFixed(6) : '',
+    RA:         sexCoords ? (target.ra  || '') : (isFinite(raDeg)  ? raDeg.toFixed(6)  : ''),
+    DECL:       sexCoords ? (target.dec || '') : (isFinite(decDeg) ? decDeg.toFixed(6) : ''),
     OFFSET_RA:  target.pmRA  || '0',
     OFFSET_DEC: target.pmDec || '0',
     PRIORITY:   ng.priority   || '',
@@ -1542,7 +1887,9 @@ function updateLoadTcsBtn() {
   // rather than hiding the bar) — toggling the bar in and out of layout used
   // to shift every row below it, which could make a real double-click land
   // on the wrong cell if it happened between the two clicks.
-  btn.disabled = _selectedTargetIdx === null;
+  // Only enabled for exactly one selection — the TCS can only track one
+  // target at a time, so a multi-selection has no single unambiguous target to send.
+  btn.disabled = _selectedTargetIndices.length !== 1;
 }
 
 // Reflect the parse format of the selected target in the radio buttons + label.
@@ -1672,79 +2019,140 @@ function updateAirmass() {
 }
 
 
-// ── Moon Position (Meeus simplified, accurate to ~1°) ────────────────────────
-// Returns { ra_h, dec_d } (J2000, hours / degrees) for the given Julian Date.
-function moonPos(jd) {
-  const T = (jd - 2451545.0) / 36525.0;   // Julian centuries from J2000
+// ── Moon Position (Meeus ch. 47, full 47.A/47.B tables) ──────────────────────
+// The earlier implementation kept only the 13 largest longitude and 8 largest
+// latitude terms, was geocentric, and duplicated its own copy of the longitude
+// series inside moonElongation. Checked against a JPL-grade ephemeris it landed
+// 2.02° off on-sky on average and up to 3.44° — enough that the drawn Moon
+// marker visibly missed the Moon's glare in the all-sky image on any given
+// night, and enough to matter for moon-avoidance planning. The full tables plus
+// a topocentric correction bring that to 0.013° mean / 0.014° max over 60 days.
+// Verified against Meeus's own worked example 47.a (1992 April 12.0 TD), which
+// reproduces to all published digits: λ 133.162655°, β -3.229126°, Δ 368409.7 km.
 
-  // Mean longitude / anomaly / argument of latitude (degrees)
-  const Lp = (218.3164477 + 481267.88123421 * T) % 360;
-  const D  = (297.8501921 + 445267.1114034  * T) % 360;
-  const M  = (357.5291092 +  35999.0502909  * T) % 360;  // Sun's mean anomaly
-  const Mp = (134.9633964 + 477198.8675055  * T) % 360;  // Moon's mean anomaly
-  const F  = (93.2720950  + 483202.0175233  * T) % 360;  // Argument of latitude
+// Table 47.A — argument multipliers (D, M, M', F), then the Σl coefficient
+// (units 1e-6 deg) and the Σr coefficient (units 1e-3 km).
+const _MOON_LR = [
+  [0,0,1,0,6288774,-20905355],[2,0,-1,0,1274027,-3699111],[2,0,0,0,658314,-2955968],
+  [0,0,2,0,213618,-569925],[0,1,0,0,-185116,48888],[0,0,0,2,-114332,-3149],
+  [2,0,-2,0,58793,246158],[2,-1,-1,0,57066,-152138],[2,0,1,0,53322,-170733],
+  [2,-1,0,0,45758,-204586],[0,1,-1,0,-40923,-129620],[1,0,0,0,-34720,108743],
+  [0,1,1,0,-30383,104755],[2,0,0,-2,15327,10321],[0,0,1,2,-12528,0],
+  [0,0,1,-2,10980,79661],[4,0,-1,0,10675,-34782],[0,0,3,0,10034,-23210],
+  [4,0,-2,0,8548,-21636],[2,1,-1,0,-7888,24208],[2,1,0,0,-6766,30824],
+  [1,0,-1,0,-5163,-8379],[1,1,0,0,4987,-16675],[2,-1,1,0,4036,-12831],
+  [2,0,2,0,3994,-10445],[4,0,0,0,3861,-11650],[2,0,-3,0,3665,14403],
+  [0,1,-2,0,-2689,-7003],[2,0,-1,2,-2602,0],[2,-1,-2,0,2390,10056],
+  [1,0,1,0,-2348,6322],[2,-2,0,0,2236,-9884],[0,1,2,0,-2120,5751],
+  [0,2,0,0,-2069,0],[2,-2,-1,0,2048,-4950],[2,0,1,-2,-1773,4130],
+  [2,0,0,2,-1595,0],[4,-1,-1,0,1215,-3958],[0,0,2,2,-1110,0],
+  [3,0,-1,0,-892,3258],[2,1,1,0,-810,2616],[4,-1,-2,0,759,-1897],
+  [0,2,-1,0,-713,-2117],[2,2,-1,0,-700,2354],[2,1,-2,0,691,0],
+  [2,-1,0,-2,596,0],[4,0,1,0,549,-1423],[0,0,4,0,537,-1117],
+  [4,-1,0,0,520,-1571],[1,0,-2,0,-487,-1739],[2,1,0,-2,-399,0],
+  [0,0,2,-2,-381,-4421],[1,1,1,0,351,0],[3,0,-2,0,-340,0],
+  [4,0,-3,0,330,0],[2,-1,2,0,327,0],[0,2,1,0,-323,1165],
+  [1,1,-1,0,299,0],[2,0,3,0,294,0],[2,0,-1,-2,0,8752],
+];
+// Table 47.B — argument multipliers (D, M, M', F) and the Σb coefficient (1e-6 deg).
+const _MOON_B = [
+  [0,0,0,1,5128122],[0,0,1,1,280602],[0,0,1,-1,277693],[2,0,0,-1,173237],
+  [2,0,-1,1,55413],[2,0,-1,-1,46271],[2,0,0,1,32573],[0,0,2,1,17198],
+  [2,0,1,-1,9266],[0,0,2,-1,8822],[2,-1,0,-1,8216],[2,0,-2,-1,4324],
+  [2,0,1,1,4200],[2,1,0,-1,-3359],[2,-1,-1,1,2463],[2,-1,0,1,2211],
+  [2,-1,-1,-1,2065],[0,1,-1,-1,-1870],[4,0,-1,-1,1828],[0,1,0,1,-1794],
+  [0,0,0,3,-1749],[0,1,-1,1,-1565],[1,0,0,1,-1491],[0,1,1,1,-1475],
+  [0,1,1,-1,-1410],[0,1,0,-1,-1344],[1,0,0,-1,-1335],[0,0,3,1,1107],
+  [4,0,0,-1,1021],[4,0,-1,1,833],[0,0,1,-3,777],[4,0,-2,1,671],
+  [2,0,0,-3,607],[2,0,2,-1,596],[2,-1,1,-1,491],[2,0,-2,1,-451],
+  [0,0,3,-1,439],[2,0,2,1,422],[2,0,-3,-1,421],[2,1,-1,1,-366],
+  [2,1,0,1,-351],[4,0,0,1,331],[2,-1,1,1,315],[2,-2,0,-1,302],
+  [0,0,1,3,-283],[2,1,1,-1,-229],[1,1,0,-1,223],[1,1,0,1,223],
+  [0,1,-2,-1,-220],[2,1,-1,-1,-220],[1,0,1,1,-185],[2,-1,-2,-1,181],
+  [0,1,2,1,-177],[4,0,-2,-1,176],[4,-1,-1,-1,166],[1,0,1,-1,-164],
+  [4,0,1,-1,132],[1,0,-1,-1,-119],[4,-1,0,-1,115],[2,-2,0,1,107],
+];
 
-  const r  = Math.PI / 180;
+// Palomar observer, for the topocentric (parallax) correction. The Moon is close
+// enough that parallax reaches ~0.95° near the horizon — always displacing it
+// downward — so a geocentric position is not good enough to match the all-sky image.
+const _PAL_LAT_DEG = 33.3563;
+const _PAL_HEIGHT_M = 1712;
 
-  // Longitude correction (degrees, only the largest terms)
-  let dLon = 6.289 * Math.sin(Mp * r)
-            - 1.274 * Math.sin((2 * D - Mp) * r)
-            + 0.658 * Math.sin(2 * D * r)
-            - 0.186 * Math.sin(M * r)
-            - 0.059 * Math.sin((2 * Mp - 2 * D) * r)
-            - 0.057 * Math.sin((Mp - 2 * D + M) * r)
-            + 0.053 * Math.sin((Mp + 2 * D) * r)
-            + 0.046 * Math.sin((2 * D - M) * r)
-            + 0.041 * Math.sin((Mp - M) * r)
-            - 0.035 * Math.sin(D * r)
-            - 0.031 * Math.sin((Mp + M) * r)
-            - 0.015 * Math.sin((2 * F - 2 * D) * r)
-            + 0.011 * Math.sin((Mp - 4 * D) * r);
+// Geocentric ecliptic longitude/latitude (deg, mean equinox of date) and
+// distance (km). Shared by moonPos and moonElongation so the series exists once.
+function _moonEcliptic(jd) {
+  const r = Math.PI / 180;
+  const T = (jd - 2451545.0) / 36525.0;
+  const Lp = 218.3164477 + 481267.88123421*T - 0.0015786*T*T + T*T*T/538841 - T*T*T*T/65194000;
+  const D  = 297.8501921 + 445267.1114034*T  - 0.0018819*T*T + T*T*T/545868 - T*T*T*T/113065000;
+  const M  = 357.5291092 + 35999.0502909*T   - 0.0001536*T*T + T*T*T/24490000;
+  const Mp = 134.9633964 + 477198.8675055*T  + 0.0087414*T*T + T*T*T/69699  - T*T*T*T/14712000;
+  const F  = 93.2720950  + 483202.0175233*T  - 0.0036539*T*T - T*T*T/3526000 + T*T*T*T/863310000;
+  const A1 = 119.75 + 131.849*T, A2 = 53.09 + 479264.290*T, A3 = 313.45 + 481266.484*T;
+  // Terms in M depend on the Earth's varying eccentricity (Meeus 47.6).
+  const E = 1 - 0.002516*T - 0.0000074*T*T;
 
-  // Latitude correction (degrees)
-  let dLat = 5.128 * Math.sin(F * r)
-            + 0.280 * Math.sin((Mp + F) * r)
-            + 0.277 * Math.sin((Mp - F) * r)
-            + 0.173 * Math.sin((2 * D - F) * r)
-            + 0.055 * Math.sin((2 * D - Mp + F) * r)
-            - 0.046 * Math.sin((2 * D - Mp - F) * r)
-            + 0.033 * Math.sin((2 * D + F) * r)
-            + 0.017 * Math.sin((2 * Mp + F) * r);
+  let sl = 0, sr = 0, sb = 0;
+  for (const [d, m, mp, f, cl, cr] of _MOON_LR) {
+    const arg = (d*D + m*M + mp*Mp + f*F) * r;
+    const e = m === 0 ? 1 : (Math.abs(m) === 1 ? E : E*E);
+    sl += cl * e * Math.sin(arg);
+    sr += cr * e * Math.cos(arg);
+  }
+  for (const [d, m, mp, f, cb] of _MOON_B) {
+    const arg = (d*D + m*M + mp*Mp + f*F) * r;
+    const e = m === 0 ? 1 : (Math.abs(m) === 1 ? E : E*E);
+    sb += cb * e * Math.sin(arg);
+  }
+  // Additive terms for Venus (A1), Jupiter (A2) and Earth flattening (A3).
+  sl += 3958*Math.sin(A1*r) + 1962*Math.sin((Lp - F)*r) + 318*Math.sin(A2*r);
+  sb += -2235*Math.sin(Lp*r) + 382*Math.sin(A3*r) + 175*Math.sin((A1 - F)*r)
+      + 175*Math.sin((A1 + F)*r) + 127*Math.sin((Lp - Mp)*r) - 115*Math.sin((Lp + Mp)*r);
 
-  const lambda = (Lp + dLon) * r;   // ecliptic longitude (radians)
-  const beta   = dLat * r;           // ecliptic latitude (radians)
+  return {
+    lon:  ((Lp + sl/1e6) % 360 + 360) % 360,
+    lat:  sb / 1e6,
+    dist: 385000.56 + sr/1000,
+    T,
+  };
+}
 
-  // Obliquity of ecliptic (degrees → radians)
-  const eps = (23.439291111 - 0.013004167 * T) * r;
+// Apparent { ra_h, dec_d, dist_km } for the given Julian Date, referred to the
+// equator of date. Pass the local apparent sidereal time (decimal hours) to get
+// topocentric coordinates for Palomar; omit it for geocentric.
+function moonPos(jd, lst_h) {
+  const r = Math.PI / 180;
+  const { lon, lat, dist, T } = _moonEcliptic(jd);
+  const eps = (23.439291111 - 0.013004167*T - 1.64e-7*T*T + 5.036e-7*T*T*T) * r;
+  const l = lon * r, b = lat * r;
+  const ra_r  = Math.atan2(Math.sin(l)*Math.cos(eps) - Math.tan(b)*Math.sin(eps), Math.cos(l));
+  const dec_r = Math.asin(Math.sin(b)*Math.cos(eps) + Math.cos(b)*Math.sin(eps)*Math.sin(l));
+  const ra_h  = ((ra_r / r) / 15 % 24 + 24) % 24;
+  if (lst_h === undefined || lst_h === null) return { ra_h, dec_d: dec_r / r, dist_km: dist };
 
-  // Convert ecliptic → equatorial
-  const ra_r  = Math.atan2(Math.sin(lambda) * Math.cos(eps) - Math.tan(beta) * Math.sin(eps),
-                            Math.cos(lambda));
-  const dec_r = Math.asin(Math.sin(beta) * Math.cos(eps) + Math.cos(beta) * Math.sin(eps) * Math.sin(lambda));
-
-  const ra_h  = ((ra_r * 180 / Math.PI) / 15 % 24 + 24) % 24;
-  const dec_d = dec_r * 180 / Math.PI;
-  return { ra_h, dec_d };
+  // Topocentric correction (Meeus 40.2): shifts the Moon toward the horizon by
+  // up to ~0.95°, which is why the marker sat consistently high before.
+  const phi = _PAL_LAT_DEG * r;
+  const u   = Math.atan(0.99664719 * Math.tan(phi));
+  const rsp = 0.99664719*Math.sin(u) + (_PAL_HEIGHT_M/6378140)*Math.sin(phi);
+  const rcp = Math.cos(u) + (_PAL_HEIGHT_M/6378140)*Math.cos(phi);
+  const sinPi = 6378.14 / dist;
+  const H   = (lst_h - ra_h) * 15 * r;
+  const den = Math.cos(dec_r) - rcp*sinPi*Math.cos(H);
+  const dra = Math.atan2(-rcp*sinPi*Math.sin(H), den);
+  const decT = Math.atan2((Math.sin(dec_r) - rsp*sinPi)*Math.cos(dra), den);
+  return { ra_h: ((ra_h + dra/r/15) % 24 + 24) % 24, dec_d: decT / r, dist_km: dist };
 }
 
 // Returns the Moon's elongation from the Sun in degrees (0=new, 90=first quarter,
-// 180=full, 270=last quarter).  Uses the same longitude terms as moonPos above.
+// 180=full, 270=last quarter). Geocentric is correct here — this only drives the
+// phase outline, which is a property of the Sun-Earth-Moon geometry, not of where
+// the observer stands.
 function moonElongation(jd) {
-  const T = (jd - 2451545.0) / 36525.0, r = Math.PI / 180;
-  const Lp = (218.3164477 + 481267.88123421 * T) % 360;
-  const D  = (297.8501921 + 445267.1114034  * T) % 360;
-  const M  = (357.5291092 +  35999.0502909  * T) % 360;
-  const Mp = (134.9633964 + 477198.8675055  * T) % 360;
-  const F  = (93.2720950  + 483202.0175233  * T) % 360;
-  const dLon = 6.289*Math.sin(Mp*r)          - 1.274*Math.sin((2*D-Mp)*r)
-             + 0.658*Math.sin(2*D*r)          - 0.186*Math.sin(M*r)
-             - 0.059*Math.sin((2*Mp-2*D)*r)   - 0.057*Math.sin((Mp-2*D+M)*r)
-             + 0.053*Math.sin((Mp+2*D)*r)     + 0.046*Math.sin((2*D-M)*r)
-             + 0.041*Math.sin((Mp-M)*r)       - 0.035*Math.sin(D*r)
-             - 0.031*Math.sin((Mp+M)*r)       - 0.015*Math.sin((2*F-2*D)*r)
-             + 0.011*Math.sin((Mp-4*D)*r);
-  const moonLon = (Lp + dLon + 720) % 360;
-  const Ms  = (357.529 + 35999.054 * T) % 360;
+  const r = Math.PI / 180;
+  const { lon: moonLon, T } = _moonEcliptic(jd);
+  const Ms = (357.529 + 35999.054 * T) % 360;
   const sunLon = (280.459 + 36000.772*T + 1.914*Math.sin(Ms*r) + 0.020*Math.sin(2*Ms*r) + 720) % 360;
   return (moonLon - sunLon + 360) % 360;
 }
@@ -1860,14 +2268,30 @@ const SKY_LAT_R = 33.3563 * Math.PI / 180;   // Palomar Mountain latitude
 // All-sky camera rotation offset (CW degrees) and zoom scale.  Both are persisted
 // to localStorage so empirical calibration survives page reloads.
 // ALLSKY_SCALE<1 zooms the camera FOV in (canvas edge is beyond camera horizon).
-let ALLSKY_ROTATION_DEG = parseFloat(localStorage.getItem('allsky_rotation') ?? '-13');
+// Rotation measured two independent ways against the 2026-09-24 camera frame,
+// agreeing to 0.14°: the public all-sky fiducial overlay's four cardinal ticks
+// plus its NCP marker give north at camera azimuth +10.39° ± 0.22°, and solving
+// for the Moon's observed glare against its true topocentric position gives
+// +10.53°. ALLSKY_ROTATION_DEG is the negative of that (output_azim =
+// camera_azim + rot), so -10.5 puts north at the top. The previous -13
+// over-rotated the camera image by ~2.5°.
+let ALLSKY_ROTATION_DEG = parseFloat(localStorage.getItem('allsky_rotation') ?? '-10.5');
 let ALLSKY_SCALE        = parseFloat(localStorage.getItem('allsky_scale')    ?? '1.0');
 
 // Calibration constants from original FACSUM telescope.cfg
 // Forward mapping (camera px → overlay px): corrR = A·r + B·r² + C
 const _ASK_CX    = 349;      // fisheye centre column in 640×480 JPEG
 const _ASK_CY    = 249.5;    // fisheye centre row
-const _ASK_R_CAM = 270;      // mask radius in camera pixels (RAW_MASK_DIAMETER/2)
+// Mask radius in camera pixels (RAW_MASK_DIAMETER/2) — i.e. the raw-frame
+// radius that corresponds to the horizon, alt=0. Raised from the inherited 270
+// after measuring the Moon against its true topocentric altitude in the
+// 2026-09-24 frame: at its measured raw radius of 160.45 px, R_CAM=270 put it
+// at alt 40.33° when the truth was 42.361° (~2° too low), while 280 gives
+// 42.41°. The raw frame's own visible fisheye edge also sits at r≈275-285.
+// NOTE: do not try to absorb this via ALLSKY_SCALE instead — the cull below
+// rejects uncR > _ASK_R_CAM*1.02, so scaling alone leaves a black annulus
+// between the old cull radius and the true horizon.
+const _ASK_R_CAM = 280;
 const _ASK_A = 1.1337, _ASK_B = 0.0009, _ASK_C = 0.1887;
 // Overlay radius at alt=0 (horizon): A·270 + B·270² + C ≈ 371.9
 const _ASK_R_OVL = _ASK_A * _ASK_R_CAM + _ASK_B * _ASK_R_CAM * _ASK_R_CAM + _ASK_C;
@@ -2012,6 +2436,7 @@ function skyProject(alt, az, cx, cy, R) {
 function drawSky() {
   const canvas = el('sky-canvas');
   if (!canvas) return;
+  _skyMarkers = [];   // rebuilt below as path markers are drawn; used by the hover-tooltip handler
   const wrap = canvas.parentElement;
   const size = Math.min(wrap.clientWidth, wrap.clientHeight) - 4;
   if (size < 80) return;
@@ -2144,7 +2569,7 @@ function drawSky() {
 
   // ── Horizon elevation limit at 6.5° ──────────────────────────────────────
   {
-    const limitAlt = 6.5;
+    const limitAlt = SKY_HORIZON_ALT_DEG;
     const limitR   = (1 - limitAlt / 90) * eR;
     ctx.beginPath();
     ctx.arc(ecx, ecy, limitR, 0, 2 * Math.PI);
@@ -2169,7 +2594,9 @@ function drawSky() {
 
       // Moon
       if (el('sky-show-moon')?.checked !== false) {
-        const { ra_h: mRa, dec_d: mDec } = moonPos(jdNow);
+        // _lst_h is passed so the position comes back topocentric — without it
+        // the marker sits up to ~0.95° above the Moon's actual place in the sky.
+        const { ra_h: mRa, dec_d: mDec } = moonPos(jdNow, _lst_h);
         let mHa = _lst_h - mRa;
         while (mHa >  12) mHa -= 24;
         while (mHa < -12) mHa += 24;
@@ -2239,8 +2666,10 @@ function drawSky() {
   const lst_h  = sexDec(lstStr);
 
   if (lst_h !== null && _targets.length > 0) {
+    const nSel = _selectedTargetIndices.length;
     for (let i = 0; i < _targets.length; i++) {
-      if (_skyTargetMode === 'selected' && i !== _selectedTargetIdx) continue;
+      const selPos = _selectedTargetIndices.indexOf(i);
+      if (_skyTargetMode === 'selected' && selPos === -1) continue;
       const t = _targets[i];
       const ra_h  = sexDec(t.ra);
       const dec_d = sexDec(t.dec);
@@ -2252,50 +2681,159 @@ function drawSky() {
       if (alt < 0) continue;
       const pt = skyProject(alt, az, ecx, ecy, eR);
       if (!pt) continue;
-      const isSel = (i === _selectedTargetIdx);
+      const isSel = selPos !== -1;
+      const color = isSel ? selectedTargetColor(selPos, nSel) : '#ffb86c';
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, isSel ? 5 : 3.5, 0, 2 * Math.PI);
-      ctx.fillStyle = isSel ? '#ffe0aa' : '#ffb86c';
+      ctx.fillStyle = color;
       ctx.fill();
       if (showLabels) {
         ctx.font         = '10px monospace';
-        ctx.fillStyle    = isSel ? 'rgba(255,224,170,0.95)' : 'rgba(255,184,108,0.9)';
+        ctx.fillStyle    = isSel ? color : 'rgba(255,184,108,0.9)';
         ctx.textAlign    = 'left';
         ctx.textBaseline = 'middle';
         ctx.fillText(t.name, pt.x + 6, pt.y);
       }
     }
 
-    // Selected target crosshair (drawn on top of all dots)
-    if (_selectedTargetIdx !== null) {
-      const t = _targets[_selectedTargetIdx];
-      if (t) {
-        const ra_h  = sexDec(t.ra);
-        const dec_d = sexDec(t.dec);
-        if (ra_h !== null && dec_d !== null) {
-          let ha_h = lst_h - ra_h;
-          while (ha_h >  12) ha_h -= 24;
-          while (ha_h < -12) ha_h += 24;
-          const { alt, az } = haDecToAltAz(ha_h, dec_d);
-          if (alt > 0) {
-            const pt = skyProject(alt, az, ecx, ecy, eR);
-            if (pt) {
-              const s = 11;
-              ctx.strokeStyle = '#ffe0aa';
-              ctx.lineWidth   = 1.5;
-              ctx.beginPath();
-              ctx.moveTo(pt.x - s, pt.y); ctx.lineTo(pt.x + s, pt.y);
-              ctx.moveTo(pt.x, pt.y - s); ctx.lineTo(pt.x, pt.y + s);
-              ctx.stroke();
-              ctx.beginPath();
-              ctx.arc(pt.x, pt.y, 7, 0, 2 * Math.PI);
-              ctx.stroke();
-            }
-          }
-        }
+    // Selected target crosshair(s) (drawn on top of all dots)
+    _selectedTargetIndices.forEach((idx, selPos) => {
+      const t = _targets[idx];
+      if (!t) return;
+      const ra_h  = sexDec(t.ra);
+      const dec_d = sexDec(t.dec);
+      if (ra_h === null || dec_d === null) return;
+      let ha_h = lst_h - ra_h;
+      while (ha_h >  12) ha_h -= 24;
+      while (ha_h < -12) ha_h += 24;
+      const { alt, az } = haDecToAltAz(ha_h, dec_d);
+      if (alt <= 0) return;
+      const pt = skyProject(alt, az, ecx, ecy, eR);
+      if (!pt) return;
+      const s = 11;
+      ctx.strokeStyle = selectedTargetColor(selPos, nSel);
+      ctx.lineWidth   = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(pt.x - s, pt.y); ctx.lineTo(pt.x + s, pt.y);
+      ctx.moveTo(pt.x, pt.y - s); ctx.lineTo(pt.x, pt.y + s);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 7, 0, 2 * Math.PI);
+      ctx.stroke();
+    });
+  }
+
+  // ── Selected targets' full paths (+ hover-sync dots) ───────────────────────
+  // Traces the same HA(t)/Dec the airmass plot uses, but extended PATH_PAD_HOURS
+  // past dusk/dawn on each side so each target's whole rise-to-set arc shows,
+  // not just the dark-time sliver. A point only reads as "bright/usable" when
+  // it's BOTH within dark time AND actually observable (isTargetObservable —
+  // the practical horizon and the P200's mechanical limits, whichever binds
+  // first); everything else fades to a dim/dashed style in that target's own
+  // color (see selectedTargetDimColor), so "beyond a limit" and "not dark
+  // yet" read as one consistent visual language without losing which path is
+  // whose when several are shown at once. Independent of live LST/telemetry —
+  // this is a whole-night planning overlay, so it still draws while
+  // disconnected from the TCS.
+  const PATH_PAD_HOURS = 8;   // how far past dusk/dawn the path extends each side
+  _selectedTargetIndices.forEach((selIdx, selPos) => {
+    const pathTarget = _targets[selIdx];
+    const pRa  = pathTarget ? sexDec(pathTarget.ra)  : null;
+    const pDec = pathTarget ? sexDec(pathTarget.dec) : null;
+    const pathBounds = (pRa !== null && pDec !== null) ? getTonightUtBounds() : null;
+    if (!pathBounds) return;
+
+    const brightColor = selectedTargetColor(selPos, _selectedTargetIndices.length);
+    const dimColor     = selectedTargetDimColor(selPos, _selectedTargetIndices.length);
+
+    const { gm0: pGm0, ssUT: pSsUT, srUT: pSrUT } = pathBounds;
+    const pPadMin = pSsUT - PATH_PAD_HOURS;
+    const pPadMax = pSrUT + PATH_PAD_HOURS;
+    const pathHa = ut => {
+      let ha = amLST(ut, pGm0) - pRa;
+      while (ha >  12) ha -= 24;
+      while (ha < -12) ha += 24;
+      return ha;
+    };
+
+    const steps = Math.ceil((pPadMax - pPadMin) * 12);   // same 5-min cadence as the airmass plot
+    const pathPts = [];
+    for (let i = 0; i <= steps; i++) {
+      const ut   = pPadMin + (i / steps) * (pPadMax - pPadMin);
+      const ha   = pathHa(ut);
+      const { alt, az } = haDecToAltAz(ha, pDec);
+      const dark = ut >= pSsUT && ut <= pSrUT;
+      const ok   = isTargetObservable(ha, pDec);
+      pathPts.push({ pt: skyProject(alt, az, ecx, ecy, eR), dark, ok, bright: dark && ok });
+    }
+
+    // Two passes (bright, then dim) rather than switching style mid-stroke,
+    // since canvas strokes don't blend per-segment styling cheaply.
+    for (const wantBright of [false, true]) {
+      ctx.beginPath();
+      let penDown = false;
+      for (const p of pathPts) {
+        if (!p.pt || p.bright !== wantBright) { penDown = false; continue; }
+        if (!penDown) { ctx.moveTo(p.pt.x, p.pt.y); penDown = true; }
+        else            ctx.lineTo(p.pt.x, p.pt.y);
+      }
+      ctx.strokeStyle = wantBright ? hexToRgba(brightColor, 0.55) : dimColor;
+      ctx.lineWidth   = wantBright ? 1.75 : 1.5;
+      ctx.setLineDash(wantBright ? [] : [2, 3]);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // Limit-crossing markers — same red/green convention as the airmass plot,
+    // regardless of which target's path they're on (semantic, not per-target).
+    // Each marker's fill color is also stored in _skyMarkers so the hover
+    // tooltip can color-match itself to the exact dot it's labeling.
+    for (let i = 1; i < pathPts.length; i++) {
+      const p0 = pathPts[i - 1], p1 = pathPts[i];
+      if (!p0.pt || !p1.pt || p0.ok === p1.ok) continue;
+      const color = p1.ok ? 'rgba(80,250,123,0.9)' : 'rgba(255,85,85,0.9)';
+      ctx.beginPath();
+      ctx.arc(p1.pt.x, p1.pt.y, 3, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth   = 1;
+      ctx.stroke();
+      _skyMarkers.push({ x: p1.pt.x, y: p1.pt.y, label: p1.ok ? 'Available' : 'Limit', color });
+    }
+
+    // Dusk/dawn markers — where the path crosses into/out of dark time,
+    // colored to match the airmass plot's sunset/sunrise dashed lines.
+    for (let i = 1; i < pathPts.length; i++) {
+      const p0 = pathPts[i - 1], p1 = pathPts[i];
+      if (!p0.pt || !p1.pt || p0.dark === p1.dark) continue;
+      const color = 'rgba(240,190,60,0.9)';
+      ctx.beginPath();
+      ctx.arc(p1.pt.x, p1.pt.y, 3, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth   = 1;
+      ctx.stroke();
+      _skyMarkers.push({ x: p1.pt.x, y: p1.pt.y, label: p1.dark ? 'Sunset' : 'Sunrise', color });
+    }
+
+    // Hover-sync dot — mirrors the mouse position on the airmass plot.
+    if (_amHoverUT !== null) {
+      const hHa = pathHa(_amHoverUT);
+      const { alt: hAlt, az: hAz } = haDecToAltAz(hHa, pDec);
+      const hp = skyProject(hAlt, hAz, ecx, ecy, eR);
+      if (hp) {
+        ctx.beginPath();
+        ctx.arc(hp.x, hp.y, 5, 0, 2 * Math.PI);
+        ctx.fillStyle   = isTargetObservable(hHa, pDec) ? '#ffffff' : '#ff5555';
+        ctx.fill();
+        ctx.strokeStyle = brightColor;
+        ctx.lineWidth   = 1.5;
+        ctx.stroke();
       }
     }
-  }
+  });
 
   // ── Telescope crosshair (drawn last so it is always on top) ─────────────────
   // Compute HA from LST − RA (same formula as targets) so both markers share
@@ -2424,18 +2962,177 @@ function amLST(utOff, gm0) {
   return ((gm0 + 1.00274 * utOff + AM_LON / 15) % 24 + 24) % 24;
 }
 
-// Airmass of a target at utOff hours past today's midnight UT; null = below horizon
-function amForTarget(target, utOff, gm0) {
-  const ra_h  = sexDec(target.ra);
-  const dec_d = sexDec(target.dec);
-  if (ra_h === null || dec_d === null) return null;
+// Practical minimum observing elevation — matches the sky display's dashed
+// horizon circle and computeAirmass's own cutoff (elsewhere in this file).
+const SKY_HORIZON_ALT_DEG = 6.5;
+
+// ── P200 mechanical/hardware pointing limits ─────────────────────────────────
+// From the "200 INCH LIMITS" reference sheet (last update 21 Nov 2018).
+// North/south are hard Dec floors/ceilings (limit switches, item A/D — the
+// "set" value is used for the north ceiling, the true hard stop; the "slew"
+// value is a softer advisory boundary not modeled here). Between those, the
+// reachable |HA| envelope is bounded by two independent mechanisms, taken
+// declination-by-declination from item B (horizon-ball limit, tightest near
+// the equator/south) and item C (Coude-alley tooth-clutch limit, a flat
+// ±6:40 that becomes the binding constraint from Dec +20 up through the
+// north limit). Rows below list each breakpoint's *effective* limit — i.e.
+// min(B, C) at that declination — so linear interpolation between adjacent
+// rows already reflects whichever mechanism actually binds there.
+const TCS_SOUTH_DEG = -(39 + 18 / 60 + 30 / 3600);  // item A, south limit switch
+const TCS_NORTH_DEG =   88 + 45 / 60;               // item D, north limit switch ("set")
+
+const TCS_DEC_LIMITS = {
+  southDeg: TCS_SOUTH_DEG,
+  northDeg: TCS_NORTH_DEG,
+  haBreakpoints: [   // { dec (deg), east/west HA limit (hours) }
+    // The south anchor is real: item A reports HA 00:00:00 at its exact Dec,
+    // and its own footnote ("when Coude' Arch is up, south limit at 0 H.A.
+    // is -00 01 00") confirms this switch's reach genuinely depends on
+    // position — the horseshoe-mount fork closes in on the tube near
+    // transit, tightest at the southernmost declinations. Interpolating from
+    // this point (rather than extrapolating table B's much gentler mid-sky
+    // slope) is what actually fixed an earlier overestimate of ~3.65h vs the
+    // correct ~1.77h reachable HA at Dec -35°.
+    //
+    // There is no matching anchor for the north: item D's own HA 00:00:00
+    // entries describe a plain Dec-only limit switch, with no footnote
+    // suggesting position-dependence, and no comparable hardware hazard
+    // (no fork/horseshoe closing in near the pole the way it does to the
+    // south). So table B/C's flat ±6:40 (already constant from Dec +20
+    // through +80) is left to extend unmodified up to the north Dec limit —
+    // tcsHaEnvelope's clamp-to-last-breakpoint behavior does this for free.
+    { dec: TCS_SOUTH_DEG, east: 0,          west: 0          },
+    { dec: -30,           east: 4 + 0 / 60,  west: 3 + 58 / 60 },
+    { dec: -20,           east: 4 + 40 / 60, west: 4 + 38 / 60 },
+    { dec: -10,           east: 5 + 10 / 60, west: 5 + 8 / 60  },
+    { dec:   0,           east: 5 + 36 / 60, west: 5 + 34 / 60 },
+    { dec:  10,           east: 6 + 0 / 60,  west: 6 + 1 / 60  },
+    { dec:  20,           east: 6 + 40 / 60, west: 6 + 40 / 60 },
+    { dec:  80,           east: 6 + 40 / 60, west: 6 + 40 / 60 },
+  ],
+};
+
+// Reachable ±HA envelope (hours) at a given declination, linearly interpolated
+// between the tabulated breakpoints. The south end is a real anchor (see the
+// comment on TCS_SOUTH_DEG's breakpoint above); the north end has no such
+// anchor, so anything from Dec +80 up to the north Dec limit just clamps to
+// the last (flat ±6:40) breakpoint's value, same as isWithinTcsLimits calling
+// this past either array end directly.
+function tcsHaEnvelope(decDeg) {
+  const bps = TCS_DEC_LIMITS.haBreakpoints;
+  if (decDeg <= bps[0].dec)                   return { east: bps[0].east,                 west: bps[0].west };
+  if (decDeg >= bps[bps.length - 1].dec)      return { east: bps[bps.length - 1].east,     west: bps[bps.length - 1].west };
+  for (let i = 0; i < bps.length - 1; i++) {
+    const a = bps[i], b = bps[i + 1];
+    if (decDeg <= b.dec) {
+      const t = (decDeg - a.dec) / (b.dec - a.dec);
+      return { east: a.east + t * (b.east - a.east), west: a.west + t * (b.west - a.west) };
+    }
+  }
+}
+
+// True if (ha, dec) is a physically reachable P200 pointing per TCS_DEC_LIMITS.
+// ha follows the app's existing convention (see _ha_to_h / amForTarget below):
+// negative = east of meridian, positive = west.
+function isWithinTcsLimits(haHours, decDeg) {
+  if (decDeg < TCS_DEC_LIMITS.southDeg || decDeg > TCS_DEC_LIMITS.northDeg) return false;
+  const { east, west } = tcsHaEnvelope(decDeg);
+  return haHours >= -east && haHours <= west;
+}
+
+// True if the target is actually trackable right now: above the practical
+// observing horizon (SKY_HORIZON_ALT_DEG — matches the sky display's dashed
+// circle and computeAirmass's own cutoff) AND within the P200's mechanical
+// pointing limits. Whichever of the two is hit first, chronologically, is
+// what actually stops tracking, so this must AND both rather than checking
+// the mechanical limits alone — otherwise a target that's simply set below
+// the practical horizon can still read as "within limits" until it also
+// happens to cross the separate mechanical HA/Dec envelope.
+function isTargetObservable(haHours, decDeg) {
+  const { alt } = haDecToAltAz(haHours, decDeg);
+  return alt > SKY_HORIZON_ALT_DEG && isWithinTcsLimits(haHours, decDeg);
+}
+
+// Hour angle of a target at utOff hours past today's midnight UT, or null if
+// its RA can't be parsed. Shared by amForTarget and isTargetWithinLimits so
+// the two stay in exact agreement on what "the target's HA right now" means.
+function haForTarget(target, utOff, gm0) {
+  const ra_h = sexDec(target.ra);
+  if (ra_h === null) return null;
   const lst = amLST(utOff, gm0);
   let ha = lst - ra_h;
   while (ha >  12) ha -= 24;
   while (ha < -12) ha += 24;
+  return ha;
+}
+
+// Airmass of a target at utOff hours past today's midnight UT; null = below horizon
+function amForTarget(target, utOff, gm0) {
+  const dec_d = sexDec(target.dec);
+  const ha    = haForTarget(target, utOff, gm0);
+  if (ha === null || dec_d === null) return null;
   const { alt } = haDecToAltAz(ha, dec_d);
   if (alt <= 0) return null;
   return 1 / Math.sin(alt * Math.PI / 180);
+}
+
+// ── Parallactic angle ────────────────────────────────────────────────────────
+// The position angle of the great circle running from the target to the zenith,
+// measured east of north. Atmospheric dispersion smears an object along exactly
+// that direction, so a slit set to this angle keeps the whole spectrum in the
+// slit — hence "angle of best transmission". Meeus ch. 14:
+//
+//     tan q = sin H / (tan φ · cos δ − sin δ · cos H)
+//
+// Returned wrapped into 0°…360° rather than the atan2-native −180°…+180°: the
+// TCS only accepts a ring angle in 0–360, so showing a negative number here
+// would mean the observer has to convert one in their head before typing it in.
+//
+// Two behaviours worth knowing when reading the trace. A target north of the
+// zenith (Dec > Palomar's 33.36°) passes smoothly through 180° at transit,
+// while a target south of the zenith transits at 0°/360° and so wraps between
+// the bottom and top of the axis there. And the angle swings fastest for
+// targets passing close to the zenith — exactly when slit angle matters most
+// and when a fixed angle goes stale quickest.
+function parallacticAngle(haHours, decDeg) {
+  const H = _skyRad(haHours * 15);
+  const d = _skyRad(decDeg);
+  const q = _skyDeg(Math.atan2(
+    Math.sin(H),
+    Math.tan(SKY_LAT_R) * Math.cos(d) - Math.sin(d) * Math.cos(H)));
+  return (q + 360) % 360;
+}
+
+// Parallactic angle of a target at utOff hours past today's midnight UT.
+// null when the coordinates don't parse or the target is below the horizon —
+// mirroring amForTarget, so the two traces start and stop together.
+// Lone-selection colour for the parallactic trace and its right-hand axis.
+// Not the usual '#ffe0aa' single-selection gold — the Moon's airmass curve is
+// already a dashed yellow, and two dashed yellow curves on one plot are
+// needlessly hard to tell apart. Orange (the app's --orange) rather than the
+// purple used before, which read as the Sky Display panel's own theme colour
+// and so looked like it belonged to that pane instead of to this axis.
+const PA_TRACE_COLOR = '#ffb86c';
+
+function paForTarget(target, utOff, gm0) {
+  const dec_d = sexDec(target.dec);
+  const ha    = haForTarget(target, utOff, gm0);
+  if (ha === null || dec_d === null) return null;
+  const { alt } = haDecToAltAz(ha, dec_d);
+  if (alt <= 0) return null;
+  return parallacticAngle(ha, dec_d);
+}
+
+// True if the target is actually observable at utOff — see isTargetObservable
+// (practical horizon AND mechanical limits, whichever binds first). Targets
+// with unparseable coordinates report true (no basis to claim a limit
+// violation) rather than false, matching amForTarget's own fail-open-to-null
+// behavior for the same case.
+function isTargetWithinLimits(target, utOff, gm0) {
+  const dec_d = sexDec(target.dec);
+  const ha    = haForTarget(target, utOff, gm0);
+  if (ha === null || dec_d === null) return true;
+  return isTargetObservable(ha, dec_d);
 }
 
 // Smooth colour for a given airmass value — interpolated between the same stops
@@ -2480,6 +3177,50 @@ function amPTOffset() {
   return Math.round(off);
 }
 
+// Tonight's (or, if it's currently pre-dawn, last night's) plotted window:
+// sunset/sunrise as UT-hours-past-jd0-midnight, plus the JD/GMST reference
+// needed to turn any UT-hour offset in that window into an LST. Shared by
+// the airmass plot and the selected-target sky-path overlay so both trace
+// out exactly the same night — a hover on one always means the same instant
+// on the other.
+function getTonightUtBounds() {
+  // Use new Date() for calendar-date calculations (sunrise/sunset, night bounds).
+  // For the NOW marker, prefer TCS-derived JD so the position reflects observatory
+  // time rather than the client workstation's clock, which may be unsynchronised.
+  const now      = new Date();
+  const clientJD = now.getTime() / 86400000 + 2440587.5;
+  const jdNow    = _tcsNowJD ?? clientJD;
+  const jd0      = Math.floor(clientJD - 0.5) + 0.5;  // calendar date from client (accurate enough)
+  const gm0      = amGMST0(jd0);
+
+  const boundsToday = amNightBounds(now);
+  if (!boundsToday) return null;
+
+  // Choose which night to display:
+  //   Before today's sunrise → we're still in last night (yesterday's sunset → today's sunrise)
+  //   Otherwise (daytime or post-sunset evening) → show tonight (today's sunset → tomorrow's sunrise)
+  let ssUT, srUT;
+  if (jdNow < boundsToday.jSunrise) {
+    // Early morning — still observing last night
+    const yesterday = new Date(now);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const boundsYest = amNightBounds(yesterday);
+    if (!boundsYest) return null;
+    ssUT = (boundsYest.jSunset   - jd0) * 24;
+    srUT = (boundsToday.jSunrise - jd0) * 24;
+  } else {
+    // Daytime or evening — show the upcoming/current night
+    const tomorrow = new Date(now);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const boundsTmr = amNightBounds(tomorrow);
+    if (!boundsTmr) return null;
+    ssUT = (boundsToday.jSunset - jd0) * 24;
+    srUT = (boundsTmr.jSunrise  - jd0) * 24;
+  }
+
+  return { jd0, gm0, jdNow, ssUT, srUT, xMin: ssUT - 0.5, xMax: srUT + 0.5 };
+}
+
 function drawAirmassPlt() {
   const canvas = el('airmass-canvas');
   if (!canvas) return;
@@ -2496,51 +3237,21 @@ function drawAirmassPlt() {
   ctx.fillStyle = '#020208';
   ctx.fillRect(0, 0, W, H);
 
-  // Margins: left needs room for airmass labels, bottom for time labels
-  const PL = 44, PR = 8, PT = 10, PB = 52;
+  // Margins: left needs room for airmass labels, bottom for time labels.
+  // The right margin only opens up when the parallactic-angle axis is shown,
+  // so the default layout is pixel-for-pixel what it always was.
+  const showPA = _showParallactic;
+  const PL = 44, PR = showPA ? 46 : 8, PT = 10, PB = 52;
   const pw = W - PL - PR;
   const ph = H - PT - PB;
 
-  // Solar / time setup.
-  // Use new Date() for calendar-date calculations (sunrise/sunset, night bounds).
-  // For the NOW marker, prefer TCS-derived JD so the position reflects observatory
-  // time rather than the client workstation's clock, which may be unsynchronised.
-  const now      = new Date();
-  const clientJD = now.getTime() / 86400000 + 2440587.5;
-  const jdNow    = _tcsNowJD ?? clientJD;
-  const jd0      = Math.floor(clientJD - 0.5) + 0.5;  // calendar date from client (accurate enough)
-  const gm0      = amGMST0(jd0);
+  const bounds = getTonightUtBounds();
+  if (!bounds) return;
+  const { jd0, gm0, jdNow, ssUT, srUT, xMin, xMax } = bounds;
 
   // Exact UT offset from jd0's midnight — works correctly across the UTC day boundary
   const markerUT = (jdNow - jd0) * 24;
 
-  const boundsToday = amNightBounds(now);
-  if (!boundsToday) return;
-
-  // Choose which night to display:
-  //   Before today's sunrise → we're still in last night (yesterday's sunset → today's sunrise)
-  //   Otherwise (daytime or post-sunset evening) → show tonight (today's sunset → tomorrow's sunrise)
-  let ssUT, srUT;
-  if (jdNow < boundsToday.jSunrise) {
-    // Early morning — still observing last night
-    const yesterday = new Date(now);
-    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-    const boundsYest = amNightBounds(yesterday);
-    if (!boundsYest) return;
-    ssUT = (boundsYest.jSunset   - jd0) * 24;
-    srUT = (boundsToday.jSunrise - jd0) * 24;
-  } else {
-    // Daytime or evening — show the upcoming/current night
-    const tomorrow = new Date(now);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    const boundsTmr = amNightBounds(tomorrow);
-    if (!boundsTmr) return;
-    ssUT = (boundsToday.jSunset - jd0) * 24;
-    srUT = (boundsTmr.jSunrise  - jd0) * 24;
-  }
-
-  const xMin = ssUT - 0.5;   // 30 min before sunset
-  const xMax = srUT + 0.5;   // 30 min after sunrise
   _amPW        = pw;
   _amNightSpan = xMax - xMin;
   const vMin   = xMin + _amPanHours;
@@ -2560,9 +3271,15 @@ function drawAirmassPlt() {
   }
 
   const AM_MIN = 1.0, AM_MAX = 4.5;
+  // Parallactic angle gets its own scale on the right-hand axis: it shares no
+  // units with airmass, so overlaying it on the airmass scale would be
+  // meaningless. 0–360 to match the range the TCS accepts for a ring angle.
+  const PA_MIN = 0, PA_MAX = 360;
 
   function xPx(t)  { return PL + (t - vMin) / (vMax - vMin) * pw; }
   function yPx(am) { return PT + (am - AM_MIN) / (AM_MAX - AM_MIN) * ph; }
+  // +180 at the top, −180 at the bottom (angles read upward, unlike airmass).
+  function yPa(pa) { return PT + (PA_MAX - pa) / (PA_MAX - PA_MIN) * ph; }
 
   // ── Twilight shading (30-min buffers at each end = pre-sunset / post-sunrise) ──
   const xSS = xPx(ssUT), xSR = xPx(srUT);
@@ -2581,6 +3298,32 @@ function drawAirmassPlt() {
     ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(PL + pw, y); ctx.stroke();
     ctx.fillStyle = 'rgba(120,120,175,0.9)';
     ctx.fillText(am.toFixed(1), PL - 3, y);
+  }
+
+  // ── Right-hand axis (parallactic angle) ───────────────────────────────────
+  // Ticks only — no horizontal rules, so the airmass grid stays the one that
+  // reads across the plot and the two scales can't be visually confused.
+  if (showPA) {
+    ctx.font         = '11px monospace';
+    ctx.textAlign    = 'left';
+    ctx.textBaseline = 'middle';
+    for (const pa of [0, 60, 120, 180, 240, 300, 360]) {
+      const y = yPa(pa);
+      ctx.strokeStyle = 'rgba(255,184,108,0.45)';
+      ctx.lineWidth   = 0.6;
+      ctx.beginPath(); ctx.moveTo(PL + pw, y); ctx.lineTo(PL + pw + 4, y); ctx.stroke();
+      // 180° is where a target north of the zenith transits — the one interior
+      // gridline worth carrying across the plot. (0°/360° is the south-of-zenith
+      // transit value, but it lands on the axis ends where the border already is.)
+      if (pa === 180) {
+        ctx.strokeStyle = 'rgba(255,184,108,0.15)';
+        ctx.setLineDash([2, 4]);
+        ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(PL + pw, y); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.fillStyle = 'rgba(255,184,108,0.85)';
+      ctx.fillText(String(pa), PL + pw + 6, y);
+    }
   }
 
   // ── X grid lines (every 2 hours, dual UT / PT labels) ───────────────────
@@ -2654,8 +3397,9 @@ function drawAirmassPlt() {
     for (let i = 0; i <= steps; i++) {
       const utOff = vMin + (i / steps) * (vMax - vMin);
       const jd    = jd0 + utOff / 24;
-      const { ra_h: mRa, dec_d: mDec } = moonPos(jd);
+      // LST first, so moonPos can return a topocentric position (see drawSky).
       const lst = amLST(utOff, gm0);
+      const { ra_h: mRa, dec_d: mDec } = moonPos(jd, lst);
       let ha = lst - mRa;
       while (ha >  12) ha -= 24;
       while (ha < -12) ha += 24;
@@ -2698,12 +3442,24 @@ function drawAirmassPlt() {
     }
   }
 
-  // ── Airmass curve ──────────────────────────────────────────────────────────
-  const target = (_selectedTargetIdx !== null) ? _targets[_selectedTargetIdx] : null;
-  const _nameSpan = el('airmass-target-name');
-  if (_nameSpan) _nameSpan.textContent = target ? (target.name || '') : '';
+  // ── Airmass curve(s) ─────────────────────────────────────────────────────────
+  // A lone selection keeps the exact original look (airmass-value color
+  // gradient, neutral gray fade, full numeric "now" readout). With 2+
+  // targets, an airmass-value gradient on every curve would make them
+  // indistinguishable from each other, so each gets one fixed color instead
+  // (selectedTargetColor) — solid for usable segments, the same hue dimmed
+  // for segments beyond a limit — and the "now" marker/crossing labels
+  // simplify to avoid overlapping text when several curves share the plot.
+  // Rect of the parallactic "now" readout once drawn, so the hover readout
+  // (drawn afterwards, at the bottom of this function) can avoid landing on it.
+  let paNowBox = null;
 
-  if (!target) {
+  const selTargets = _selectedTargetIndices.map(idx => _targets[idx]).filter(Boolean);
+  const nSel = selTargets.length;
+  const _nameSpan = el('airmass-target-name');
+  if (_nameSpan) _nameSpan.textContent = selTargets.map(t => t.name || '').filter(Boolean).join(', ');
+
+  if (nSel === 0) {
     ctx.fillStyle    = 'rgba(130,130,185,0.55)';
     ctx.font         = '14px sans-serif';
     ctx.textAlign    = 'center';
@@ -2711,56 +3467,195 @@ function drawAirmassPlt() {
     ctx.fillText('Select a target to view its airmass curve',
                  PL + pw / 2, PT + ph / 2);
   } else {
-    // Sample every 5 minutes across the plot range
-    const steps = Math.ceil((vMax - vMin) * 12);
-    const pts = [];
-    for (let i = 0; i <= steps; i++) {
-      const t  = vMin + (i / steps) * (vMax - vMin);
-      pts.push({ t, am: amForTarget(target, t, gm0) });
-    }
+    selTargets.forEach((target, selPos) => {
+      // Sample every 5 minutes across the plot range
+      const steps = Math.ceil((vMax - vMin) * 12);
+      const pts = [];
+      for (let i = 0; i <= steps; i++) {
+        const t  = vMin + (i / steps) * (vMax - vMin);
+        pts.push({
+          t,
+          am: amForTarget(target, t, gm0),
+          pa: showPA ? paForTarget(target, t, gm0) : null,
+          ok: isTargetWithinLimits(target, t, gm0),
+        });
+      }
 
-    // Gradient curve — each segment blends smoothly between its endpoint colours
-    ctx.lineWidth = 2.5;
-    ctx.lineCap   = 'round';
-    for (let i = 1; i < pts.length; i++) {
-      const p0 = pts[i - 1], p1 = pts[i];
-      if (p0.am === null || p1.am === null) continue;
-      if ((p0.am + p1.am) / 2 > AM_MAX) continue;
-      const x0 = xPx(p0.t), y0 = yPx(Math.min(p0.am, AM_MAX));
-      const x1 = xPx(p1.t), y1 = yPx(Math.min(p1.am, AM_MAX));
-      const grad = ctx.createLinearGradient(x0, y0, x1, y1);
-      grad.addColorStop(0, amColor(Math.min(p0.am, AM_MAX)));
-      grad.addColorStop(1, amColor(Math.min(p1.am, AM_MAX)));
-      ctx.strokeStyle = grad;
-      ctx.beginPath();
-      ctx.moveTo(x0, y0);
-      ctx.lineTo(x1, y1);
-      ctx.stroke();
-    }
+      const color    = nSel > 1 ? selectedTargetColor(selPos, nSel) : null;
+      const dimColor = nSel > 1 ? hexToRgba(color, 0.3) : 'rgba(130,130,150,0.35)';
 
-    // White dot + airmass value at current time
-    if (markerUT >= vMin && markerUT <= vMax) {
-      const amNow = amForTarget(target, markerUT, gm0);
-      if (amNow !== null && amNow <= AM_MAX) {
-        const x = xPx(markerUT), y = yPx(amNow);
-        ctx.beginPath(); ctx.arc(x, y, 4, 0, 2 * Math.PI);
-        ctx.fillStyle   = '#ffffff'; ctx.fill();
-        ctx.strokeStyle = '#bd93f9'; ctx.lineWidth = 1.5; ctx.stroke();
-        const rSide  = x > PL + pw - 46;
-        const labelX = rSide ? x - 9 : x + 9;
-        ctx.fillStyle = '#ffffff';
-        ctx.font      = 'bold 12px monospace';
-        ctx.textAlign = rSide ? 'right' : 'left';
-        // Flip below the dot when drawing above would clip the top margin
-        if (y - 14 >= PT) {
-          ctx.textBaseline = 'bottom';
-          ctx.fillText(amNow.toFixed(2), labelX, y - 2);
+      // ── Parallactic-angle trace ───────────────────────────────────────────
+      // Drawn before the airmass curve so the airmass curve stays the dominant
+      // line. Dashed and thinner, in the target's own colour (a lone selection
+      // uses the same gold its row/path highlight uses elsewhere), so it reads
+      // as "same target, different quantity" rather than a second target.
+      // Segments spanning the ±180° wrap are skipped: joining them would draw a
+      // full-height vertical line straight through the plot.
+      if (showPA) {
+        const paColor = nSel > 1 ? color : PA_TRACE_COLOR;
+        ctx.save();
+        ctx.lineWidth = 1.4;
+        ctx.setLineDash([5, 4]);
+        // Two passes (beyond-limits, then usable), each accumulated into ONE
+        // path before stroking. Stroking segment-by-segment the way the airmass
+        // curve does would defeat the dash entirely: canvas restarts the dash
+        // phase at every stroke(), and at 5-minute sampling a segment is only
+        // ~4px wide — shorter than the 5px "on" dash, so every segment would
+        // draw solid.
+        for (const wantOk of [false, true]) {
+          ctx.beginPath();
+          let pen = false;
+          for (let i = 1; i < pts.length; i++) {
+            const p0 = pts[i - 1], p1 = pts[i];
+            const drawable = p0.pa !== null && p1.pa !== null &&
+                             Math.abs(p1.pa - p0.pa) <= 180;   // skip the ±180 wrap at transit
+            if (!drawable || (p0.ok && p1.ok) !== wantOk) { pen = false; continue; }
+            if (!pen) { ctx.moveTo(xPx(p0.t), yPa(p0.pa)); pen = true; }
+            ctx.lineTo(xPx(p1.t), yPa(p1.pa));
+          }
+          ctx.strokeStyle = wantOk ? hexToRgba(paColor, 0.9) : dimColor;
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // Curve — gradient-by-airmass for a lone target (unchanged); a flat
+      // per-target color for 2+, since a value gradient can't distinguish
+      // "whose curve is this" the way one fixed hue per target can. A
+      // segment touching a sample outside the P200's pointing limits (see
+      // TCS_DEC_LIMITS) always dims instead, so it visibly fades out
+      // wherever that target can't actually be tracked there.
+      ctx.lineWidth = 2.5;
+      ctx.lineCap   = 'round';
+      for (let i = 1; i < pts.length; i++) {
+        const p0 = pts[i - 1], p1 = pts[i];
+        if (p0.am === null || p1.am === null) continue;
+        if ((p0.am + p1.am) / 2 > AM_MAX) continue;
+        const x0 = xPx(p0.t), y0 = yPx(Math.min(p0.am, AM_MAX));
+        const x1 = xPx(p1.t), y1 = yPx(Math.min(p1.am, AM_MAX));
+        if (p0.ok && p1.ok) {
+          if (nSel > 1) {
+            ctx.strokeStyle = color;
+          } else {
+            const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+            grad.addColorStop(0, amColor(Math.min(p0.am, AM_MAX)));
+            grad.addColorStop(1, amColor(Math.min(p1.am, AM_MAX)));
+            ctx.strokeStyle = grad;
+          }
         } else {
-          ctx.textBaseline = 'top';
-          ctx.fillText(amNow.toFixed(2), labelX, y + 6);
+          ctx.strokeStyle = dimColor;
+        }
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+        ctx.stroke();
+      }
+
+      // Mark each point where the target crosses into/out of the P200's
+      // pointing limits — red entering a limit, green clearing one. Text
+      // labels only shown for a lone selection, to avoid overlapping text
+      // when several targets' curves are overlaid.
+      for (let i = 1; i < pts.length; i++) {
+        const p0 = pts[i - 1], p1 = pts[i];
+        if (p0.am === null || p1.am === null || p0.ok === p1.ok) continue;
+        const x = xPx(p1.t), y = yPx(Math.min(p1.am, AM_MAX));
+        ctx.beginPath();
+        ctx.arc(x, y, 3.5, 0, 2 * Math.PI);
+        ctx.fillStyle   = p1.ok ? 'rgba(80,250,123,0.9)' : 'rgba(255,85,85,0.9)';
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth   = 1;
+        ctx.stroke();
+        if (nSel === 1) {
+          ctx.fillStyle    = p1.ok ? 'rgba(80,250,123,0.9)' : 'rgba(255,85,85,0.9)';
+          ctx.font         = '10px sans-serif';
+          ctx.textAlign    = (x > PL + pw - 60) ? 'right' : 'left';   // widened for "AVAILABLE" (was tuned for "CLEAR")
+          ctx.textBaseline = (y - 16 >= PT) ? 'bottom' : 'top';
+          ctx.fillText(p1.ok ? 'AVAILABLE' : 'LIMIT', x + (ctx.textAlign === 'right' ? -6 : 6), y + (ctx.textBaseline === 'bottom' ? -6 : 6));
         }
       }
-    }
+
+      // "Now" marker — full numeric readout for a lone target (unchanged
+      // look, ringed red instead of purple if presently beyond a limit); a
+      // smaller colored-ring dot with no readout box per target when several
+      // are shown, since overlapping boxes at the same x would be unreadable.
+      // Which side of the NOW line the airmass label took. The parallactic
+      // label below always takes the other side, so the two can never collide
+      // however the curves happen to cross at the current time.
+      let amNowOnRight = null;
+
+      if (markerUT >= vMin && markerUT <= vMax) {
+        const amNow = amForTarget(target, markerUT, gm0);
+        if (amNow !== null && amNow <= AM_MAX) {
+          const nowOk = isTargetWithinLimits(target, markerUT, gm0);
+          const x = xPx(markerUT), y = yPx(amNow);
+          ctx.beginPath(); ctx.arc(x, y, 4, 0, 2 * Math.PI);
+          ctx.fillStyle   = '#ffffff'; ctx.fill();
+          ctx.strokeStyle = nSel > 1 ? color : (nowOk ? '#bd93f9' : '#ff5555');
+          ctx.lineWidth   = 1.5;
+          ctx.stroke();
+          if (nSel === 1) {
+            const rSide  = x > PL + pw - 46;
+            const labelX = rSide ? x - 9 : x + 9;
+            amNowOnRight = !rSide;
+            ctx.fillStyle = '#ffffff';
+            ctx.font      = 'bold 12px monospace';
+            ctx.textAlign = rSide ? 'right' : 'left';
+            // Flip below the dot when drawing above would clip the top margin
+            if (y - 14 >= PT) {
+              ctx.textBaseline = 'bottom';
+              ctx.fillText(amNow.toFixed(2), labelX, y - 2);
+            } else {
+              ctx.textBaseline = 'top';
+              ctx.fillText(amNow.toFixed(2), labelX, y + 6);
+            }
+          }
+        }
+
+        // Matching "now" dot on the parallactic trace — this is the number an
+        // observer actually sets the slit to, so it gets a readout of its own
+        // for a lone selection.
+        if (showPA) {
+          const paNow = paForTarget(target, markerUT, gm0);
+          if (paNow !== null) {
+            const x = xPx(markerUT), y = yPa(paNow);
+            ctx.beginPath(); ctx.arc(x, y, 3, 0, 2 * Math.PI);
+            ctx.fillStyle   = nSel > 1 ? color : PA_TRACE_COLOR;
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+            ctx.lineWidth   = 1;
+            ctx.stroke();
+            if (nSel === 1) {
+              // Boxed, and on the opposite side of the NOW line from the
+              // airmass readout. The box matters because this label often
+              // lands on top of the airmass curve or a LIMIT/AVAILABLE
+              // annotation — angles below 90° sit low on a 0–360 axis, which
+              // is exactly where those already are.
+              const paStr = paNow.toFixed(1) + '°';
+              ctx.font = 'bold 11px monospace';
+              const pad = 4;
+              const bw  = ctx.measureText(paStr).width + pad * 2;
+              const bh  = 14 + pad * 2;
+              const putRight = (amNowOnRight === null) ? true : !amNowOnRight;
+              let bx = putRight ? x + 9 : x - 9 - bw;
+              bx = Math.max(PL, Math.min(bx, PL + pw - bw));
+              const by = Math.max(PT, Math.min(y - bh / 2, PT + ph - bh));
+              // Recorded so the hover readout, drawn later, can steer around it.
+              paNowBox = { x: bx, y: by, w: bw, h: bh };
+              ctx.fillStyle   = 'rgba(15,12,30,0.86)';
+              ctx.fillRect(bx, by, bw, bh);
+              ctx.strokeStyle = PA_TRACE_COLOR;
+              ctx.lineWidth   = 1;
+              ctx.strokeRect(bx, by, bw, bh);
+              ctx.fillStyle    = PA_TRACE_COLOR;
+              ctx.textAlign    = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(paStr, bx + bw / 2, by + bh / 2);
+            }
+          }
+        }
+      }
+    });
   }
 
   ctx.restore(); // end curve clip
@@ -2781,11 +3676,28 @@ function drawAirmassPlt() {
   ctx.fillText('AIRMASS', 0, 0);
   ctx.restore();
 
+  // ── Right-hand axis label (parallactic angle) ─────────────────────────────
+  if (showPA) {
+    ctx.save();
+    ctx.translate(W - 8, PT + ph / 2);
+    ctx.rotate(Math.PI / 2);
+    ctx.fillStyle    = 'rgba(255,184,108,0.75)';
+    ctx.font         = '12px sans-serif';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('PARALLACTIC ANGLE (°)', 0, 0);
+    ctx.restore();
+  }
+
   // ── Cursor hairline ───────────────────────────────────────────────────────
+  // _amHoverUT is read by drawSky() to place a dot on the selected target's
+  // path that mirrors this cursor position exactly.
+  _amHoverUT = null;
   if (_amCursorX !== null) {
     const cx = _amCursorX;
     if (cx >= PL && cx <= PL + pw) {
       const t = vMin + (cx - PL) / pw * (vMax - vMin);
+      _amHoverUT = t;
 
       // Vertical hairline
       ctx.strokeStyle = 'rgba(200,200,255,0.50)';
@@ -2809,37 +3721,109 @@ function drawAirmassPlt() {
       ctx.textBaseline = 'bottom';
       ctx.fillText(timeLabel, onLeft ? cx + 3 : cx - 3, PT + ph - 4);
 
-      // Airmass dot + label for selected target
-      if (target) {
+      // Airmass dot(s) at the hovered time. A lone selection keeps the full
+      // amColor-coded readout box (unchanged); with 2+ targets, each just
+      // gets a small dot in its own assigned color, since several
+      // overlapping readout boxes at the same cursor x would be unreadable.
+      //
+      // The airmass readout box is opaque and horizontally centred on the
+      // cursor, so it spans roughly cx±22 — which is exactly where a
+      // parallactic readout placed beside the hairline would sit. Its rect is
+      // recorded here so the parallactic readout (drawn afterwards, below) can
+      // be positioned clear of it instead of being painted over.
+      let amBox = null;
+
+      selTargets.forEach((target, selPos) => {
         const amC = amForTarget(target, t, gm0);
-        if (amC !== null && amC <= AM_MAX) {
-          const y = yPx(Math.min(amC, AM_MAX));
+        if (amC === null || amC > AM_MAX) return;
+        const y = yPx(Math.min(amC, AM_MAX));
+        if (nSel > 1) {
           ctx.beginPath();
           ctx.arc(cx, y, 4, 0, 2 * Math.PI);
-          ctx.fillStyle   = amColor(amC);
+          ctx.fillStyle   = selectedTargetColor(selPos, nSel);
           ctx.fill();
           ctx.strokeStyle = 'rgba(255,255,255,0.8)';
           ctx.lineWidth   = 1;
           ctx.stroke();
-          // Airmass readout — follows cursor x, floats above the dot
-          // (flips below if the dot is too close to the top edge)
-          const amStr = amC.toFixed(2);
-          ctx.font    = 'bold 12px monospace';
-          const amPad = 4;
-          const amBW  = ctx.measureText(amStr).width + amPad * 2;
-          const amBH  = 16 + amPad * 2;
-          const amBX  = Math.max(PL, Math.min(cx - amBW / 2, PL + pw - amBW));
-          const amBY  = (y - amBH - 8 >= PT) ? y - amBH - 8 : y + 8;
-          ctx.fillStyle   = 'rgba(15,12,30,0.82)';
-          ctx.fillRect(amBX, amBY, amBW, amBH);
-          ctx.strokeStyle = amColor(amC);
+          return;
+        }
+        ctx.beginPath();
+        ctx.arc(cx, y, 4, 0, 2 * Math.PI);
+        ctx.fillStyle   = amColor(amC);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth   = 1;
+        ctx.stroke();
+        // Airmass readout — follows cursor x, floats above the dot
+        // (flips below if the dot is too close to the top edge)
+        const amStr = amC.toFixed(2);
+        ctx.font    = 'bold 12px monospace';
+        const amPad = 4;
+        const amBW  = ctx.measureText(amStr).width + amPad * 2;
+        const amBH  = 16 + amPad * 2;
+        const amBX  = Math.max(PL, Math.min(cx - amBW / 2, PL + pw - amBW));
+        const amBY  = (y - amBH - 8 >= PT) ? y - amBH - 8 : y + 8;
+        ctx.fillStyle   = 'rgba(15,12,30,0.82)';
+        ctx.fillRect(amBX, amBY, amBW, amBH);
+        ctx.strokeStyle = amColor(amC);
+        ctx.lineWidth   = 1;
+        ctx.strokeRect(amBX, amBY, amBW, amBH);
+        ctx.fillStyle    = amColor(amC);
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(amStr, amBX + amBW / 2, amBY + amBH / 2);
+        amBox = { x: amBX, y: amBY, w: amBW, h: amBH };
+      });
+
+      // Parallactic dot(s) and readout at the hovered time — drawn last so the
+      // slit angle is never hidden behind the airmass box, and given a box of
+      // its own so it stays legible over the grid and the curves. When the two
+      // readouts would collide, this one steps sideways clear of the airmass
+      // box rather than overlapping it, so both values stay readable at once.
+      if (showPA) {
+        selTargets.forEach((target, selPos) => {
+          const paC = paForTarget(target, t, gm0);
+          if (paC === null) return;
+          const y = yPa(paC);
+          ctx.beginPath();
+          ctx.arc(cx, y, 3.5, 0, 2 * Math.PI);
+          ctx.fillStyle   = nSel > 1 ? selectedTargetColor(selPos, nSel) : PA_TRACE_COLOR;
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(255,255,255,0.8)';
           ctx.lineWidth   = 1;
-          ctx.strokeRect(amBX, amBY, amBW, amBH);
-          ctx.fillStyle    = amColor(amC);
+          ctx.stroke();
+          if (nSel !== 1) return;
+
+          const paStr = paC.toFixed(1) + '°';
+          ctx.font = 'bold 11px monospace';
+          const pad = 4;
+          const bw  = ctx.measureText(paStr).width + pad * 2;
+          const bh  = 14 + pad * 2;
+
+          const by = Math.max(PT, Math.min(y - bh / 2, PT + ph - bh));
+
+          // Try candidate x positions in order of preference and take the
+          // first that is in bounds and clear of both the airmass readout and
+          // the parallactic "now" readout. Beside the hairline reads best, so
+          // those come first; the rest tuck against whichever box is in the way.
+          const blockers = [amBox, paNowBox].filter(Boolean);
+          const clear = bx => bx >= PL && bx + bw <= PL + pw &&
+            !blockers.some(r => bx < r.x + r.w && bx + bw > r.x && by < r.y + r.h && by + bh > r.y);
+          const candidates = [cx + 9, cx - 9 - bw];
+          for (const r of blockers) candidates.push(r.x + r.w + 4, r.x - bw - 4);
+          let bx = candidates.find(clear);
+          if (bx === undefined) bx = Math.max(PL, Math.min(cx + 9, PL + pw - bw));
+
+          ctx.fillStyle   = 'rgba(15,12,30,0.82)';
+          ctx.fillRect(bx, by, bw, bh);
+          ctx.strokeStyle = PA_TRACE_COLOR;
+          ctx.lineWidth   = 1;
+          ctx.strokeRect(bx, by, bw, bh);
+          ctx.fillStyle    = PA_TRACE_COLOR;
           ctx.textAlign    = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(amStr, amBX + amBW / 2, amBY + amBH / 2);
-        }
+          ctx.fillText(paStr, bx + bw / 2, by + bh / 2);
+        });
       }
     }
   }
@@ -3352,10 +4336,23 @@ document.addEventListener('DOMContentLoaded', () => {
   el('rate-units').addEventListener('change', updateRateHeaders);
   updateRateHeaders();   // set headers on first load
   renderTargetRows();    // show the "+ Load Target List" empty-state invite on first load
+  // Force the button to match the fresh _selectedTargetIdx (null) rather than
+  // trusting the static HTML `disabled` attribute alone — browsers restore a
+  // form control's script-set state (disabled/value/checked) across a plain
+  // reload of the same document, independent of what the HTML source says.
+  // Without this, reloading a tab that previously had a target selected can
+  // leave the button re-enabled even though nothing is selected this time.
+  updateLoadTcsBtn();
   el('delim-other').addEventListener('input', () => {
     // Auto-select "Other" radio when user types in the custom field
     document.querySelector('input[name="delim"][value="other"]').checked = true;
     parseTextToTable();
+  });
+
+  // Target list search — filters displayed rows by name, live as you type
+  el('target-search').addEventListener('input', () => {
+    _targetSearchQuery = el('target-search').value.toLowerCase();
+    applyTargetSearchFilter();
   });
 
   // Target table — sortable column headers
@@ -3375,6 +4372,7 @@ document.addEventListener('DOMContentLoaded', () => {
       renderTargetRows();
     });
   });
+  initColumnDragReorder();
 
   // SFTP table — sortable column headers
   document.querySelectorAll('#sftp-tbl th[data-col]').forEach(th => {
@@ -3562,6 +4560,41 @@ document.addEventListener('DOMContentLoaded', () => {
     drawAirmassPlt();
   });
 
+  // Parallactic-angle toggle. It lives inside the <summary>, and a click on
+  // anything inside a <summary> toggles the <details> open/closed — so without
+  // stopping propagation here, ticking the box would also collapse the plot
+  // you just asked to draw on. preventDefault() on the label is not enough on
+  // its own: the label still needs to drive its own checkbox, so the click is
+  // handled explicitly rather than suppressed.
+  {
+    const paBox   = el('am-show-pa');
+    const paLabel = el('am-pa-toggle');
+    if (paBox && paLabel) {
+      // Forced to match _showParallactic rather than trusting the HTML alone:
+      // browsers restore a form control's script-set checked state across a
+      // plain reload of the same document, so a tab that had this on could
+      // otherwise come back ticked. (Same reason updateLoadTcsBtn() runs on
+      // load — see the note there.)
+      paBox.checked = _showParallactic;
+      // Drop the key an earlier version wrote, so a workstation that used the
+      // persisted build doesn't keep a dead entry in localStorage.
+      localStorage.removeItem('facsum_show_pa');
+      // stopPropagation only — deliberately NOT preventDefault. Cancelling a
+      // checkbox's click runs the spec's "canceled activation steps", which
+      // restore `checked` to its pre-click value *after* every listener has
+      // run. Setting .checked inside the handler is therefore undone on the
+      // way out, leaving the box blank while the feature itself toggles —
+      // which is exactly the "works but never shows a tick" behaviour this
+      // replaces. Letting the default run keeps the tick, and the `change`
+      // listener below reads the state the browser settled on.
+      paLabel.addEventListener('click', e => e.stopPropagation());
+      paBox.addEventListener('change', () => {
+        _showParallactic = paBox.checked;
+        drawAirmassPlt();
+      });
+    }
+  }
+
   // Sky zoom buttons
   function skyZoomApply(newZoom) {
     _skyZoom = Math.max(1, Math.min(20, newZoom));
@@ -3608,6 +4641,33 @@ document.addEventListener('DOMContentLoaded', () => {
       dragActive = false;
       skyCanvas.style.cursor = _skyZoom > 1 ? 'grab' : '';
     });
+
+    // Hover tooltips for the selected target's path markers (Limit/Clear/
+    // Sunset/Sunrise) — _skyMarkers is rebuilt every drawSky() call with each
+    // marker's canvas-pixel position, so this just hit-tests the cursor
+    // against whatever's current. e.offsetX/offsetY are already in the
+    // canvas's own pixel space (unaffected by the page's CSS zoom transform),
+    // matching how the markers themselves were drawn.
+    const SKY_MARKER_HIT_RADIUS = 7;
+    skyCanvas.addEventListener('mousemove', e => {
+      if (dragActive) { _tip().classList.remove('visible'); return; }
+      const hit = _skyMarkers.find(m => {
+        const dx = e.offsetX - m.x, dy = e.offsetY - m.y;
+        return dx * dx + dy * dy <= SKY_MARKER_HIT_RADIUS * SKY_MARKER_HIT_RADIUS;
+      });
+      if (hit) {
+        const tip = _tip();
+        tip.textContent = hit.label;
+        tip.style.color = tip.style.borderColor = hit.color;
+        tip.classList.add('visible');
+        const p = _tipPosAbove(e.clientX, e.clientY);   // measures tip's current size, so set text/visible first
+        tip.style.left = p.left + 'px';
+        tip.style.top  = p.top  + 'px';
+      } else {
+        _tip().classList.remove('visible');
+      }
+    });
+    skyCanvas.addEventListener('mouseleave', () => _tip().classList.remove('visible'));
   }
 
   // Airmass plot cursor tracking
@@ -3625,18 +4685,20 @@ document.addEventListener('DOMContentLoaded', () => {
         _amPanHours = _amDragPanAt - dx * (_amNightSpan / _amPW);
         _amCursorX  = null; _amCursorY = null;
         el('airmass-canvas').style.cursor = 'grabbing';
-        drawAirmassPlt();
+        drawAirmassPlt();   // clears _amHoverUT (cursor untracked while panning)
+        drawSky();          // …so the sky-path hover dot disappears too
         return;
       }
     }
     _amCursorX = e.offsetX;
     _amCursorY = e.offsetY;
-    drawAirmassPlt();
+    drawAirmassPlt();   // sets _amHoverUT from the new cursor position
+    drawSky();           // sky-path hover dot follows it
   });
   el('airmass-canvas').addEventListener('mouseleave', () => {
     _amCursorX = null;
     _amCursorY = null;
-    if (!_amDragging) drawAirmassPlt();
+    if (!_amDragging) { drawAirmassPlt(); drawSky(); }
   });
   window.addEventListener('mouseup', () => {
     if (_amDragStartX !== null) {

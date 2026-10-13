@@ -46,8 +46,10 @@ server.
 `targets/` holds one file per supported format, all verified against the real
 parsers in `app.js`:
 
-- `demo_targets.csv` — 16 objects, comma-delimited, airmass 1.0–6.6 at the
-  simulated LST
+- `demo_targets.csv` — 17 objects, comma-delimited, airmass 1.0–6.6 at the
+  simulated LST. Includes `S233-D` (Dec −35°), whose reachable HA range is
+  bound by the P200's mechanical pointing limit well before the horizon does
+  — useful for the pointing-limit figures.
 - `standards.ptic` — fixed-width PTIC, including a `pm=` non-sidereal entry
 - `ngps_demo.list` — space-delimited NGPS with Priority / Magnitude / Exptime
 - `archive/` — a subdirectory, so the file browser listing shows one

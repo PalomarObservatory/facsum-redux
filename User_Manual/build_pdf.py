@@ -8,7 +8,7 @@ style with ReportLab so a PDF can be produced without a headless browser.
 Usage:
     python3 build_pdf.py [input.html] [output.pdf]
 
-Defaults to FACSUM_Web_User_Manual.html → FACSUM_User_Manual_Rev1.2.pdf in
+Defaults to FACSUM_Web_User_Manual.html → FACSUM_User_Manual_Rev1.5.pdf in
 this directory.  Requires: reportlab, beautifulsoup4, DejaVu fonts.
 """
 
@@ -25,7 +25,8 @@ from reportlab.lib.units import inch
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (BaseDocTemplate, Frame, HRFlowable, Image,
-                                KeepTogether, NextPageTemplate, PageBreak,
+                                CondPageBreak, KeepTogether, NextPageTemplate,
+                                PageBreak,
                                 PageTemplate, Paragraph, Preformatted, Spacer,
                                 Table, TableStyle)
 from reportlab.platypus.tableofcontents import TableOfContents
@@ -58,7 +59,26 @@ CLR_CLASS = {
 }
 
 # ── Fonts ────────────────────────────────────────────────────────────────────
-FONT_DIRS = ['/usr/share/fonts/truetype/dejavu', '/Library/Fonts', '/System/Library/Fonts']
+# Where to look for the DejaVu family. Order matters: a copy vendored next to
+# this script wins, then system locations, then matplotlib's bundled copy.
+#
+# This matters more than it looks. The manual uses ~45 UI glyphs — ✓ ● ▲ ▼ ⌂ ⌘
+# ↩ ↪ ↺ ← ↑ → − ≈ ≤ ″ ✕ — none of which exist in the Helvetica/Courier fallback
+# below, whose encoding is limited to Latin-1. When DejaVu is missing, every one
+# of those renders as an empty box. macOS ships no DejaVu, so the fallback was
+# being taken silently on any Mac; matplotlib bundles the whole family, which is
+# what rescues it here.
+FONT_DIRS = [
+    os.path.join(HERE, 'fonts'),
+    '/usr/share/fonts/truetype/dejavu',
+    '/Library/Fonts',
+    '/System/Library/Fonts',
+]
+try:
+    import matplotlib
+    FONT_DIRS.append(os.path.join(matplotlib.get_data_path(), 'fonts', 'ttf'))
+except Exception:
+    pass
 
 
 def _find(name):
@@ -86,6 +106,12 @@ def register_fonts():
             break
         pdfmetrics.registerFont(TTFont(alias, path))
     if not ok:                                    # fall back to built-ins
+        sys.stderr.write(
+            'build_pdf: WARNING - DejaVu fonts not found, falling back to Helvetica.\n'
+            '  Symbols such as the check mark, bullet, triangles, house and Cmd key\n'
+            '  cannot be encoded in that font and will render as empty boxes.\n'
+            '  Fix: pip install matplotlib, or copy the six DejaVu*.ttf files\n'
+            '  into %s\n' % os.path.join(HERE, 'fonts'))
         return 'Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique', 'Courier'
     pdfmetrics.registerFontFamily('Body', normal='Body', bold='Body-B',
                                   italic='Body-I', boldItalic='Body-BI')
@@ -139,7 +165,17 @@ CONTENT_W = PAGE_W - M_L - M_R
 
 
 # ── Inline markup conversion ─────────────────────────────────────────────────
+# Characters no embeddable text font carries, mapped to wording that reads the
+# same. U+1F50D (magnifying glass) exists only in Apple Color Emoji, which is a
+# colour-bitmap font ReportLab cannot embed as text — and DejaVu, like every
+# other monochrome face here, has no emoji at all. The HTML keeps the real
+# character, where a browser renders it correctly; only the PDF substitutes.
+PDF_CHAR_SUBS = {'\U0001F50D': 'magnifier'}
+
+
 def esc(text):
+    for ch, rep in PDF_CHAR_SUBS.items():
+        text = text.replace(ch, rep)
     return (text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
 
 
@@ -195,6 +231,10 @@ def badge(label, color):
 
 # ── Block builders ───────────────────────────────────────────────────────────
 def heading2(tag, story, toc_sink):
+    # Sections flow into one another rather than each starting a page, so a
+    # heading could otherwise land as the last thing on a page with its body
+    # overleaf. Require enough room for the heading plus a few lines of text.
+    story.append(CondPageBreak(110))
     span = tag.find('span', class_='sec-num')
     label = span.get_text(strip=True) if span else ''
     is_app = span is not None and 'app' in span.get('class', [])
@@ -224,6 +264,7 @@ def heading2(tag, story, toc_sink):
 
 
 def heading3(tag, story, toc_sink):
+    story.append(CondPageBreak(78))
     title = inline(tag)
     para = Paragraph(f'<b>{title}</b>', S_H3)
     bar = Table([[para]], colWidths=[CONTENT_W - 4])
@@ -405,13 +446,17 @@ def build_two_col(tag):
         for f in figs:
             out += build_figure(f)
         return out
+    # Gutter between the two columns. Each image fills its cell, so the gap a
+    # reader actually sees is (col_w - image width); with no explicit allowance
+    # the two screenshots butt together and read as a single picture.
+    TWO_COL_GUTTER = 22
     col_w = (CONTENT_W - 14) / 2
     cells = []
     for f in figs:
         img = f.find('img')
         cap = f.find('figcaption')
         stack = []
-        fl = _img_flowable(img, col_w) if img else None
+        fl = _img_flowable(img, col_w - TWO_COL_GUTTER) if img else None
         if fl:
             stack.append(fl)
         if cap:
@@ -427,27 +472,74 @@ def build_two_col(tag):
     return [Spacer(1, 6), t, Spacer(1, 10)]
 
 
+# Figure width as a fraction of the text column, keyed off the same size
+# classes the HTML uses so both renderings stay in step.
+FIG_WIDTHS = {'fig-narrow': 0.58, 'fig-mid': 0.72}
+
+
 def width_fraction(tag):
-    cls = tag.get('class') or []
-    if 'fig-narrow' in cls:
-        return 0.58
-    if 'fig-mid' in cls:
-        return 0.72
+    # An explicit data-w="0.63" on the <figure> or its <img> wins over the size
+    # classes, so individual figures can be tuned to the page flow without
+    # inventing a new class for each one.
     img = tag.find('img')
-    if img:
-        icls = img.get('class') or []
-        if 'fig-narrow' in icls:
-            return 0.58
-        if 'fig-mid' in icls:
-            return 0.72
+    for holder in (tag, img):
+        if holder is not None:
+            w = holder.get('data-w')
+            if w:
+                try:
+                    return max(0.25, min(1.0, float(w)))
+                except ValueError:
+                    pass
+    for src in (tag.get('class') or [],
+                (img.get('class') or []) if img is not None else []):
+        for cls, frac in FIG_WIDTHS.items():
+            if cls in src:
+                return frac
     return 1.0
 
 
+# A figure taller than this effectively owns its page, so its heading should
+# travel with it rather than being left behind at the foot of the previous one.
+KEEP_WITH_HEADING_PT = 300
+
+
+def _figure_height(fig_tag):
+    """Rendered height in points of the image inside a <figure>, 0 if absent."""
+    img = fig_tag.find('img')
+    if img is None:
+        return 0
+    path = os.path.join(HERE, img['src'])
+    if not os.path.exists(path):
+        return 0
+    from PIL import Image as PILImage
+    with PILImage.open(path) as im:
+        iw, ih = im.size
+    w = min(CONTENT_W * width_fraction(fig_tag), iw * 0.75)
+    return w * ih / iw
+
+
 def render_section(sec, story, toc_sink):
-    for tag in sec.children:
-        if not isinstance(tag, Tag):
+    kids = [t for t in sec.children if isinstance(t, Tag)]
+    consumed = set()
+    for idx, tag in enumerate(kids):
+        if idx in consumed:
             continue
         name = tag.name
+        # Keep a heading with its figure ONLY when that figure is tall enough
+        # that it could not share a page with much preceding text anyway. Doing
+        # this for every heading costs two whole pages: a short figure that
+        # would happily have filled the tail of a page gets dragged to the next
+        # one along with its heading. Restricting it to the tall figures fixes
+        # the stranded headings those actually cause, at no cost in pages.
+        nxt = kids[idx + 1] if idx + 1 < len(kids) else None
+        if (name in ('h2', 'h3') and nxt is not None and nxt.name == 'figure'
+                and _figure_height(nxt) > KEEP_WITH_HEADING_PT):
+            buf = []
+            (heading2 if name == 'h2' else heading3)(tag, buf, toc_sink)
+            buf += build_figure(nxt, width_fraction(nxt))
+            story.append(KeepTogether(buf))
+            consumed.add(idx + 1)
+            continue
         cls = tag.get('class') or []
         if name == 'h2':
             heading2(tag, story, toc_sink)
@@ -549,7 +641,7 @@ class Manual(BaseDocTemplate):
 
 def main():
     src = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, 'FACSUM_Web_User_Manual.html')
-    out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, 'FACSUM_User_Manual_Rev1.2.pdf')
+    out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, 'FACSUM_User_Manual_Rev1.5.pdf')
 
     soup = BeautifulSoup(open(src, encoding='utf-8').read(), 'html.parser')
 
@@ -583,8 +675,17 @@ def main():
 
     sections = [s for s in soup.find_all('div', class_='section')
                 if 'toc-page' not in (s.get('class') or [])]
-    for sec in sections:
-        story.append(PageBreak())
+    # Honour the HTML's own .page-break class instead of breaking before every
+    # section. The numbered chapters all carry it, so they still each start a
+    # page; the appendices after the first deliberately do not, and simply flow
+    # on from whatever precedes them with a little breathing room instead.
+    for i, sec in enumerate(sections):
+        if i == 0 or 'page-break' in (sec.get('class') or []):
+            story.append(PageBreak())
+        else:
+            story.append(Spacer(1, 22))
+            story.append(HRFlowable(width='100%', thickness=0.6, color=RULE,
+                                    spaceBefore=0, spaceAfter=14))
         render_section(sec, story, toc_sink)
 
     for level, text, para in toc_sink:

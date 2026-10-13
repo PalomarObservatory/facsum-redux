@@ -254,7 +254,7 @@
   }
   .sec-num.app { background: var(--purple); }
 
-  /* ── Colour swatches (inline) ── */
+  /* ── Color swatches (inline) ── */
   .clr-green  { color: #2e8b57; font-weight: 600; }
   .clr-yellow { color: #a09010; font-weight: 600; }
   .clr-orange { color: var(--orange); font-weight: 600; }
@@ -296,8 +296,7 @@
   <div class="cover-meta">
     <strong>Telescope</strong> &nbsp;P200 Hale, Palomar Mountain<br>
     <strong>Platform</strong> &nbsp;Browser-based (PHP / JavaScript)<br>
-    <strong>Revision</strong> &nbsp;1.2 &nbsp;·&nbsp; August 2026<br>
-    <strong>Contact</strong> &nbsp;iwilson@caltech.edu
+    <strong>Revision</strong> &nbsp;1.5 &nbsp;·&nbsp; September 2026
   </div>
 </div>
 
@@ -338,12 +337,14 @@
   <div class="toc-entry toc-h3"><span>5.4 &nbsp;Markers (Moon, Sun &amp; Planets)</span><span class="toc-dots"></span></div>
   <div class="toc-entry toc-h3"><span>5.5 &nbsp;Display Targets — All / Selected</span><span class="toc-dots"></span></div>
   <div class="toc-entry toc-h3"><span>5.6 &nbsp;Zoom &amp; Pan</span><span class="toc-dots"></span></div>
+  <div class="toc-entry toc-h3"><span>5.7 &nbsp;Target Path Trace</span><span class="toc-dots"></span></div>
 
   <div class="toc-entry toc-h2"><span>6 &nbsp;&nbsp;Airmass Plot</span><span class="toc-dots"></span></div>
   <div class="toc-entry toc-h3"><span>6.1 &nbsp;Reading the Plot</span><span class="toc-dots"></span></div>
   <div class="toc-entry toc-h3"><span>6.2 &nbsp;Scrolling the Time Axis</span><span class="toc-dots"></span></div>
   <div class="toc-entry toc-h3"><span>6.3 &nbsp;Interactive Cursor</span><span class="toc-dots"></span></div>
   <div class="toc-entry toc-h3"><span>6.4 &nbsp;Collapsing &amp; Resizing</span><span class="toc-dots"></span></div>
+  <div class="toc-entry toc-h3"><span>6.5 &nbsp;Parallactic Angle</span><span class="toc-dots"></span></div>
 
   <div class="toc-entry toc-h2"><span>7 &nbsp;&nbsp;Target File Browser</span><span class="toc-dots"></span></div>
 
@@ -362,7 +363,7 @@
 <!-- ══════════════════════════════════════════════════════════════
      §1  INTRODUCTION
 ══════════════════════════════════════════════════════════════ -->
-<div class="section page-break">
+<div class="section">
   <h2><span class="sec-num">1</span>Introduction</h2>
 
   <h3>1.1 Overview</h3>
@@ -376,25 +377,22 @@
     <li>An airmass plot showing when each target is best observable across the night</li>
   </ul>
   <p>
-    FACSUM runs directly on <strong>Observer1</strong> (<code>observer1.palomar.caltech.edu</code>), where a PHP built-in web server listens on <code>127.0.0.1:18080</code>. It is used from the <strong>Portal</strong> workstation. The startup script <code>start_facsum.sh</code> (run on Portal) establishes an SSH tunnel to Observer1, starts the web server if it is not already running, and opens FACSUM in a Firefox window — no manual browser navigation is required. FACSUM is not directly reachable from outside the Palomar control room network.
+    FACSUM runs directly on <strong>Observer1</strong> (<code>observer1.palomar.caltech.edu</code>), where a PHP built-in web server listens on <code>127.0.0.1:18080</code>. It is used from the <strong>Portal</strong> workstation. The startup script <code>start_facsum.sh</code> (run on Portal) establishes an SSH tunnel to Observer1, starts the web server if it is not already running, and opens FACSUM in a Firefox window — no manual browser navigation is required. FACSUM is not directly reachable from outside the Palomar network.
   </p>
   <p>
     Because FACSUM now runs <em>on</em> Observer1, target lists are read and written through ordinary filesystem calls. There is no SFTP step and no login prompt inside the browser: the only password you may be asked for is the Observer1 SSH password requested by <code>start_facsum.sh</code> at launch, and only when a healthy session is not already open.
   </p>
 
-  <div class="note">
-    <strong>New in Revision 1.2:</strong> interface zoom control (§1.3); collapsible <em>Parsing Options</em> (§4.2); double-click cell editing in the Targets Table (§4.4); SIMBAD name resolution in the Add Single Target form (§4.5); all-sky camera alignment controls (§5.3); an <em>All / Selected</em> target display toggle (§5.5); the target file browser is now a local Observer1 browser rather than an SFTP client (§7); NGPS format support and decimal-degree coordinate handling (Appendix A).
-  </div>
 
   <h3>1.2 Interface Layout</h3>
 
   <figure>
-    <img src="manual_assets/main_connected.png" alt="FACSUM main interface with TCS connected, all-sky camera active, and planets displayed">
+    <img src="manual_assets/main_connected.png" data-w="0.720" alt="FACSUM main interface with TCS connected, all-sky camera active, and planets displayed" class="fig-mid">
     <figcaption>Figure 1 — FACSUM interface with a live TCS connection and a loaded target list. Left column: Telemetry (top) and Target Lists (bottom). Right column: Sky Display (top) with all-sky camera overlay, target dots, and planetary markers, and Airmass Plot (bottom).</figcaption>
   </figure>
 
   <p>
-    The interface is divided into four panels arranged in two columns. Each panel has a coloured accent to help orient quickly:
+    The interface is divided into four panels arranged in two columns. Each panel has a colored accent to help orient quickly:
   </p>
 
   <table class="t">
@@ -408,7 +406,7 @@
   </table>
 
   <p>
-    <strong>Resizing panels:</strong> Three drag handles let you redistribute screen space to suit your workflow. Drag the <em>vertical bar</em> between the two columns to adjust their widths. Drag either <em>horizontal bar</em> — one between Telemetry and Target Lists, one between the Sky Display and the Airmass Plot — to adjust how space is split between the panels above and below it.
+    <strong>Resizing panels:</strong> Three drag handles let you redistribute screen space to suit your workflow. Drag the <em>vertical bar</em> between the two columns to adjust their widths. Drag either <em>horizontal bar</em> (one between Telemetry and Target Lists, one between the Sky Display and the Airmass Plot) to adjust how space is split between the panels above and below it.
   </p>
   <p>
     The <strong>Airmass Plot</strong> section can be collapsed by clicking its header bar, freeing additional vertical space when not needed. Its resize handle disappears while collapsed.
@@ -416,7 +414,7 @@
 
   <h3>1.3 Interface Zoom</h3>
   <p>
-    The Telemetry panel header contains a zoom control — <strong>−</strong>, a percentage readout, and <strong>+</strong> — which scales the entire FACSUM page. This is useful on the control-room displays, where the default browser text size can be uncomfortably small at a distance.
+    The Telemetry panel header contains a zoom control (<strong>−</strong>, a percentage readout, and <strong>+</strong>), which scales the entire FACSUM page. This is useful on the control-room displays, where the default browser text size can be uncomfortably small at a distance.
   </p>
   <ul>
     <li>Range <strong>50 % to 200 %</strong>, in 10 % steps.</li>
@@ -432,7 +430,7 @@
 <!-- ══════════════════════════════════════════════════════════════
      §2  QUICK START
 ══════════════════════════════════════════════════════════════ -->
-<div class="section page-break">
+<div class="section">
   <h2><span class="sec-num">2</span>Quick Start</h2>
 
   <p>
@@ -452,12 +450,12 @@
     </li>
     <li>
       <div>
-        <strong>Load your target list.</strong> Click <strong>+ Load Target List</strong> in the Target Lists panel header — or the large <strong>+ Load Target List</strong> button shown in the middle of the empty table. This opens the file browser (§7), where you can navigate the Observer1 target directory and open your file. FACSUM parses it and populates the table automatically. See §4.1 for alternatives.
+        <strong>Load your target list.</strong> Click <strong>+ Load Target List</strong> in the Target Lists panel header, or the large <strong>+ Load Target List</strong> button shown in the middle of the empty table. This opens the file browser (§7) at the Observer1 target list directory, <code>/observer/observer/targets</code>, where you can navigate to and open your file. FACSUM parses it and populates the table automatically. See §4.1 for alternatives.
       </div>
     </li>
     <li>
       <div>
-        <strong>Check target observability.</strong> The Targets Table shows a live, colour-coded airmass for each object. Sort the table by <strong>Airmass</strong> to find the best target for right now.
+        <strong>Check target observability.</strong> The Targets Table shows a live airmass for each object, updated as the night progresses. Sort the table by <strong>Airmass</strong> to find the best target for right now.
       </div>
     </li>
     <li>
@@ -473,7 +471,7 @@
   </ol>
 
   <div class="warn">
-    <strong>Important — COORDS does not slew:</strong> Sending a target with <em>Load to Telescope</em> loads coordinates into the TCS but does not move the telescope. Initiate the slew separately in the TCS software (e.g. TCSNG) before observing.
+    <strong>Important — COORDS does not slew:</strong> Sending a target with <em>Load to Telescope</em> loads coordinates into the TCS but does not move the telescope. Initiate the slew separately in the TCS software before observing.
   </div>
 </div>
 
@@ -481,11 +479,11 @@
 <!-- ══════════════════════════════════════════════════════════════
      §3  TELEMETRY PANEL
 ══════════════════════════════════════════════════════════════ -->
-<div class="section page-break">
+<div class="section">
   <h2><span class="sec-num">3</span>Telemetry Panel</h2>
 
   <figure>
-    <img src="manual_assets/panel_telemetry.png" alt="Telemetry panel in connected state showing Loaded and Current blocks and the hardware strip" class="fig-narrow">
+    <img src="manual_assets/panel_telemetry.png" data-w="0.580" alt="Telemetry panel in connected state showing Loaded and Current blocks and the hardware strip" class="fig-narrow">
     <figcaption>Figure 2 — Telemetry panel in the connected state. The orange Loaded block shows the last target sent to the TCS; the cyan Current block shows the live telescope pointing. The time strip displays UT, LST, HA, and live airmass.</figcaption>
   </figure>
 
@@ -494,7 +492,7 @@
     FACSUM connects to the TCS automatically about half a second after the page loads. A background daemon on Observer1 (<code>tcs_daemon.py</code>) holds the TCP connection to the TCS, polls it four times a second, and writes parsed telemetry to a small JSON file; the browser reads that file roughly ten times a second and redraws only when the daemon has published new data.
   </p>
   <p>
-    If the connection is lost or was manually stopped, click <strong>Connect</strong> in the panel header to restart the daemon and resume polling. A status LED and label on the <em>right side</em> of the header reflect the current connection state, colour-coded to match:
+    If the connection is lost or was manually stopped, click <strong>Connect</strong> in the panel header to restart the daemon and resume polling. A status LED and label on the <em>right side</em> of the header reflect the current connection state, color-coded to match:
   </p>
 
   <div class="two-col no-break" style="gap:10px; margin:12px 0;">
@@ -509,7 +507,7 @@
   </div>
 
   <table class="t no-break">
-    <thead><tr><th>LED colour</th><th>Label</th><th>Meaning</th></tr></thead>
+    <thead><tr><th>LED color</th><th>Label</th><th>Meaning</th></tr></thead>
     <tbody>
       <tr><td><span class="clr-green">● Green</span> (slow pulse)</td><td>Connected</td><td>Polling the TCS successfully; all fields update continuously</td></tr>
       <tr><td><span class="clr-yellow">● Yellow</span> (fast pulse)</td><td>Reconnecting…</td><td>The browser lost contact with the Observer1 server and is retrying (the button reads <em>Connecting…</em>)</td></tr>
@@ -537,7 +535,7 @@
   </p>
 
   <table class="t no-break">
-    <thead><tr><th>Mechanism</th><th>Behaviour</th></tr></thead>
+    <thead><tr><th>Mechanism</th><th>Behavior</th></tr></thead>
     <tbody>
       <tr>
         <td><strong>TCS grace period</strong></td>
@@ -549,7 +547,7 @@
       </tr>
       <tr>
         <td><strong>Heartbeat</strong></td>
-        <td>Every telemetry poll renews a heartbeat file. If the heartbeat goes stale for <strong>120 seconds</strong> — for example because the browser was closed without a clean disconnect — the daemon drops its TCS connection on its own and waits idle until a browser returns. This prevents an abandoned session from holding the TCS link open.</td>
+        <td>Every telemetry poll renews a heartbeat file. If the heartbeat goes stale for <strong>120 seconds</strong> (for example because the browser was closed without a clean disconnect) the daemon drops its TCS connection on its own and waits idle until a browser returns. This prevents an abandoned session from holding the TCS link open.</td>
       </tr>
     </tbody>
   </table>
@@ -564,7 +562,7 @@
     Populated when <strong>Load to Telescope</strong> succeeds (§4.7). All four fields show "—" until the first successful send in the current session.
   </p>
   <div class="note">
-    <strong>When the block resets:</strong> the Loaded block is cleared back to "—" whenever the list is re-parsed — loading a list, pressing <em>Parse Text</em>, or adding or deleting a target — even if a target was sent earlier in the session. After an in-place cell edit (§4.4) it shows the <em>currently selected</em> row rather than the last target actually sent. Treat the <span class="clr-cyan">Current</span> block and the TCS console as authoritative for what the telescope is holding.
+    <strong>When the block resets:</strong> the Loaded block is cleared back to "—" whenever the list is re-parsed (loading a list, pressing <em>Parse Text</em>, or adding or deleting a target) even if a target was sent earlier in the session. After an in-place cell edit (§4.4) it shows the <em>currently selected</em> row rather than the last target actually sent. Treat the <span class="clr-cyan">Current</span> block and the TCS console as authoritative for what the telescope is holding.
   </div>
   <table class="t no-break">
     <thead><tr><th>Field</th><th>Description</th></tr></thead>
@@ -572,7 +570,7 @@
       <tr><td><strong>LOADED TARGET</strong></td><td>Name of the last target sent to the TCS (truncated to 12 characters if longer)</td></tr>
       <tr><td><strong>LOADED RA</strong></td><td>Right Ascension of that target (HH:MM:SS.s)</td></tr>
       <tr><td><strong>LOADED DEC</strong></td><td>Declination of that target (±DD:MM:SS)</td></tr>
-      <tr><td><strong>LOADED EQUINOX</strong></td><td>Coordinate epoch of that target, normalised for display (e.g. <code>J2000.0</code>; epochs before 1984 are shown with a <code>B</code> prefix)</td></tr>
+      <tr><td><strong>LOADED EQUINOX</strong></td><td>Coordinate epoch of that target, normalized for display (e.g. <code>J2000.0</code>; epochs before 1984 are shown with a <code>B</code> prefix)</td></tr>
     </tbody>
   </table>
 
@@ -599,7 +597,7 @@
       <tr><td><strong>DEC OFFSET</strong></td><td>Current Dec guide/offset correction, suffixed <strong>N</strong> or <strong>S</strong>, with the same unit switch.</td></tr>
       <tr><td><strong>RA RATE</strong></td><td>Non-sidereal tracking rate in RA (arcsec/hr); reads <code>0.0"/hr</code> when not tracking</td></tr>
       <tr><td><strong>DEC RATE</strong></td><td>Non-sidereal tracking rate in Dec (arcsec/hr)</td></tr>
-      <tr><td><strong>CASS RING</strong></td><td>Cassegrain ring rotation angle, normalised to 0–360°</td></tr>
+      <tr><td><strong>CASS RING</strong></td><td>Cassegrain ring rotation angle, normalized to 0–360°</td></tr>
       <tr><td><strong>FOCUS</strong></td><td>Secondary mirror position (mm)</td></tr>
     </tbody>
   </table>
@@ -625,14 +623,14 @@
 <!-- ══════════════════════════════════════════════════════════════
      §4  TARGET LISTS PANEL
 ══════════════════════════════════════════════════════════════ -->
-<div class="section page-break">
+<div class="section">
   <h2><span class="sec-num">4</span>Target Lists Panel</h2>
 
   <h3>4.1 Loading a Target File</h3>
   <p>There are three ways to get targets into FACSUM:</p>
   <ul>
     <li>
-      <strong>From Observer1 (recommended):</strong> Click <strong>+ Load Target List</strong> in the panel header. This opens the file browser (§7), which lists the Observer1 target directory. Navigate to your file and click <strong>Open</strong> (or double-click it). FACSUM reads and parses the file automatically. When the table is empty, a second, larger <strong>+ Load Target List</strong> button appears in the middle of the pane and does the same thing.
+      <strong>From Observer1:</strong> Click <strong>+ Load Target List</strong> in the panel header. This opens the file browser (§7), which lists the Observer1 target directory. Navigate to your file and click <strong>Open</strong> (or double-click it). FACSUM reads and parses the file automatically. When the table is empty, a second, larger <strong>+ Load Target List</strong> button appears in the middle of the pane and does the same thing.
     </li>
     <li>
       <strong>By pasting text:</strong> Click the <strong>Edit Text</strong> tab, paste or type your target list, and click <strong>↺ Parse Text</strong>. This is useful for quickly trying a short list without saving a file.
@@ -642,13 +640,13 @@
     </li>
   </ul>
   <p>
-    The filename of the currently loaded list is always shown in the upper-right corner of the panel header (e.g., <span class="clr-orange">targets123.csv</span>); it reads <em>—</em> when no list is loaded. Opening a file — or adding, editing or deleting a target — activates the <strong>Save Target List</strong> and <strong>✕ Clear List</strong> buttons.
+    The filename of the currently loaded list is always shown in the upper-right corner of the panel header (e.g., <span class="clr-orange">targets123.csv</span>); it reads <em>—</em> when no list is loaded. Opening a file (or adding, editing or deleting a target) activates the <strong>Save Target List</strong> and <strong>✕ Clear List</strong> buttons.
   </p>
   <div class="note">
     <strong>Note:</strong> pasting text and pressing <strong>↺ Parse Text</strong> populates the table but does not by itself activate <em>Save Target List</em>. Adding or editing any target afterwards activates it, and the save then writes the full text including your pasted lines.
   </div>
   <p>
-    FACSUM supports three file formats — <strong>CSV</strong>, <strong>PTIC</strong>, and <strong>NGPS</strong> — and auto-detects the format of any file you open. See Appendix A for the full format specification.
+    FACSUM supports three file formats (<strong>CSV</strong>, <strong>PTIC</strong>, and <strong>NGPS</strong>) and auto-detects the format of any file you open. See Appendix A for the full format specification.
   </p>
 
   <h3>4.2 Parsing Options</h3>
@@ -662,7 +660,7 @@
       <tr>
         <td><strong>File Type</strong></td>
         <td>Auto-detect · CSV · PTIC</td>
-        <td>Auto-detect scores every format/delimiter combination against the file and picks the best match, showing a summary such as <em>"auto-detected: CSV comma (12/12 lines)"</em>. Override only if auto-detection picks the wrong format. NGPS is recognised from its header row and does not need (or have) a radio button.</td>
+        <td>Auto-detect scores every format/delimiter combination against the file and picks the best match, showing a summary such as <em>"auto-detected: CSV comma (12/12 lines)"</em>. Override only if auto-detection picks the wrong format. NGPS is recognized from its header row and does not need (or have) a radio button.</td>
       </tr>
       <tr>
         <td><strong>Delimiter</strong></td>
@@ -689,7 +687,7 @@
   <h3>4.3 Targets Table</h3>
 
   <figure>
-    <img src="manual_assets/panel_targets.png" alt="Target list panel with a loaded list, showing table controls and column headers">
+    <img src="manual_assets/panel_targets.png" data-w="0.720" alt="Target list panel with a loaded list, showing table controls and column headers" class="fig-mid">
     <figcaption>Figure 3 — Target Lists panel with <em>WIRC_Photometric_Standards.csv</em> loaded (filename shown in the header). S754-C is selected (orange highlight) and marked as observed (✓). The <strong>Load to Telescope</strong> button is active. The bottom bar shows the Add, Delete, and Clear List controls.</figcaption>
   </figure>
 
@@ -703,27 +701,35 @@
       <tr><td><strong>Epoch</strong></td><td>Coordinate epoch (e.g. 2000)</td></tr>
       <tr><td><strong>Airmass</strong></td>
         <td>
-          Current airmass, computed from LST telemetry and updated continuously, colour-coded
-          <span class="clr-green">green</span> &lt;1.5,
-          <span class="clr-yellow">yellow</span> 1.5–2.0,
-          <span class="clr-orange">orange</span> 2.0–3.0,
-          <span class="clr-red">red</span> &gt;3.0.
+          Current airmass, computed from LST telemetry and updated continuously.
           Shows <em>Down</em> when the object is at or below the P200 altitude limit (6.5°, airmass ≈ 8.8), and "—" when LST is unavailable. This column is computed and cannot be edited.
         </td>
       </tr>
       <tr><td><strong>PM RA / Rate RA</strong></td><td>Proper motion or tracking rate in RA. The header label changes with the Rate Units setting — <code>PM RA (0.0001s/yr)</code>, <code>Rate RA (arcsec/hr)</code> or <code>Rate RA (s/hr)</code>.</td></tr>
       <tr><td><strong>PM Dec / Rate Dec</strong></td><td>Proper motion or tracking rate in Dec.</td></tr>
-      <tr><td><strong>Notes</strong></td><td>Any trailing text from the source line (text after a <code>!</code> character, plus unrecognised trailing tokens)</td></tr>
+      <tr><td><strong>Prop RA (mas/yr)</strong></td><td>True proper motion in RA, in milliarcseconds per year. Unlike PM RA / Rate RA above, this column's meaning never changes with the Rate Units setting — it is always proper motion, for target lists that carry both a tracking/offset rate and a separate proper motion figure.</td></tr>
+      <tr><td><strong>Prop Dec (mas/yr)</strong></td><td>True proper motion in Dec, in milliarcseconds per year.</td></tr>
+      <tr><td><strong>Notes</strong></td><td>Any trailing text from the source line (text after a <code>!</code> character, plus unrecognized trailing tokens)</td></tr>
     </tbody>
   </table>
 
   <p>
-    NGPS files add two further columns, <strong>Priority</strong> and <strong>Mag / Filter</strong>, and rename the rate columns to <strong>Offset RA</strong> / <strong>Offset Dec</strong> and Notes to <strong>Comment</strong> (Appendix A.3).
+    NGPS files add two further columns, <strong>Priority</strong> and <strong>Mag / Filter</strong>, and rename the rate columns to <strong>Offset RA</strong> / <strong>Offset Dec</strong> and Notes to <strong>Comment</strong> (Appendix A.3). NGPS lines have no separate proper-motion field, so their Prop RA / Prop Dec cells are shown dimmed and blank.
   </p>
 
   <h4>Lines that fail to parse</h4>
   <p>
     Any line FACSUM cannot interpret is listed in red at the top of the table as <em>"Failed to Parse: …"</em>, with the raw text shown. These rows are informational only — they cannot be selected or sent. Fix them in the <strong>Edit Text</strong> tab (§4.6), where the same lines are highlighted red as you type.
+  </p>
+
+  <h4>Filtering</h4>
+  <p>
+    The search box above the table filters rows live by name as you type — matching is a simple case-insensitive substring match, with no wildcards needed. Clear the box to show every target again. Filtering never edits or reorders the underlying list; it only hides non-matching rows, and range-selection (Shift+click, below) is aware of which rows are currently visible.
+  </p>
+
+  <h4>Reordering columns</h4>
+  <p>
+    Drag a column header left or right to reorder it; drop it where you want it to sit. The new order is remembered in the browser and applies the next time FACSUM is opened on that workstation. The leading <strong>✓</strong> (Observed) column cannot be moved.
   </p>
 
   <h4>Sorting</h4>
@@ -733,14 +739,22 @@
 
   <h4>Selecting a target</h4>
   <p>
-    Click a row to select it (it highlights in orange). Click it again to deselect. Only one target can be selected at a time. Selecting a target:
+    Click a row to select it (it highlights in orange), replacing any previous selection. Click the same row again to deselect it. Selecting a target:
   </p>
   <ul>
-    <li>Draws a larger dot and crosshair for that target on the sky display</li>
+    <li>Draws a larger dot, crosshair and full-night path trace for that target on the sky display (§5.7)</li>
     <li>Draws that target's airmass curve in the Airmass Plot, and puts its name in the plot's header bar</li>
-    <li>Enables the <strong>Load to Telescope</strong> button (§4.7) and <strong>− Delete Selected</strong></li>
+    <li>Enables the <strong>− Delete Selected</strong> button, and <strong>Load to Telescope</strong> for a single selection only (§4.7)</li>
     <li>Updates the Parsing Options controls to reflect that line's own format</li>
   </ul>
+
+  <h4>Selecting multiple targets</h4>
+  <p>
+    Hold <strong>Ctrl</strong> (or <strong>⌘ Cmd</strong>) and click additional rows to add or remove them from the selection one at a time, without disturbing the rest. Hold <strong>Shift</strong> and click a row to select every row visually between it and the last row you clicked — the anchor for the range is the most recent plain, Ctrl, or Cmd click, and repeating Shift+click re-draws the range from that same anchor. Combine <strong>Shift+Ctrl</strong> (or <strong>Shift+Cmd</strong>) to add a whole range to an existing selection instead of replacing it. Range selection follows whatever is currently visible on screen, so it respects the active sort order and search filter.
+  </p>
+  <p>
+    Each selected target is drawn in its own color, consistent across the sky display, the Airmass Plot, <em>and</em> that target's own row highlight in the table, so a curve, a path, or a row can always be traced back to the other two at a glance. With two or more targets selected, <strong>Load to Telescope</strong> is disabled (the TCS can only be sent one target's coordinates at a time) but <strong>− Delete Selected</strong> removes all selected targets together.
+  </p>
 
   <h3>4.4 Editing the Table Directly</h3>
   <p>
@@ -761,14 +775,14 @@
     </tbody>
   </table>
   <p>
-    On commit, FACSUM rewrites only the edited line in the raw text — in that line's own original format (Appendix A.4) — and then re-parses the whole list, so the table and the text you would save can never drift apart. Your sort order and row selection are preserved across the edit.
+    On commit, FACSUM rewrites only the edited line in the raw text, in that line's own original format (Appendix A.4), and then re-parses the whole list, so the table and the text you would save can never drift apart. Your sort order and row selection are preserved across the edit.
   </p>
 
   <h3>4.5 Adding, Deleting &amp; Clearing Targets</h3>
 
   <h4>Adding a single target manually</h4>
   <p>
-    Click <strong>+ Add Single Target</strong> at the bottom of the panel to open a data-entry form. <strong>Name</strong>, <strong>RA</strong> and <strong>Dec</strong> are required — the <strong>Add Target</strong> button stays disabled until all three are valid — and fields are validated exactly as in §4.4, with a green outline for good input and a red outline plus tooltip for bad. The form separates <em>Non-sidereal Rates</em> (arcsec/hr) from <em>Proper Motion</em> (mas/yr), and has a free-text Notes field. Pressing <strong>Enter</strong> anywhere in the form submits it when the required fields are valid.
+    Click <strong>+ Add Single Target</strong> at the bottom of the panel to open a data-entry form. <strong>Name</strong>, <strong>RA</strong> and <strong>Dec</strong> are required (the <strong>Add Target</strong> button stays disabled until all three are valid) and fields are validated exactly as in §4.4, with a green outline for good input and a red outline plus tooltip for bad. The form separates <em>Non-sidereal Rates</em> (arcsec/hr) from <em>Proper Motion</em> (mas/yr), and has a free-text Notes field. Pressing <strong>Enter</strong> anywhere in the form submits it when the required fields are valid.
   </p>
   <p>
     The new target is appended to the list as a comma-delimited line and is immediately available for selection and sending. This is the quickest way to add a target of opportunity.
@@ -788,7 +802,7 @@
 
   <h4>Deleting a target</h4>
   <p>
-    Select a row, then click <strong>− Delete Selected</strong> to remove it. The corresponding line is deleted from the raw text and the list is re-parsed. The deletion cannot be undone from the table view; use the Edit Text tab (§4.6) and its Undo button if needed.
+    Select one or more rows (§4.3), then click <strong>− Delete Selected</strong> to remove them. The corresponding line(s) are deleted from the raw text and the list is re-parsed. The deletion cannot be undone from the table view; use the Edit Text tab (§4.6) and its Undo button if needed.
   </p>
 
   <h4>Clearing the target list</h4>
@@ -799,13 +813,13 @@
   <h3>4.6 Edit Text Tab</h3>
 
   <figure>
-    <img src="manual_assets/tab_edit.png" alt="Edit Text tab with syntax-highlighted PTIC target list">
-    <figcaption>Figure 4 — Edit Text tab. Lines are coloured in real time: valid targets in green, unparseable lines in red, and comments/blanks dimmed.</figcaption>
+    <img src="manual_assets/tab_edit.png" data-w="1.000" alt="Edit Text tab with syntax-highlighted PTIC target list">
+    <figcaption>Figure 4 — Edit Text tab. Lines are colored in real time: valid targets in green, unparseable lines in red, and comments/blanks dimmed.</figcaption>
   </figure>
 
   <p>
     The <strong>Edit Text</strong> tab shows the raw text of the loaded target list and lets you edit it directly. It is the single source of truth: everything the table shows is parsed from this text, and it is exactly what gets written when you save.
-    A live syntax-highlighting overlay colours each line as you type:
+    A live syntax-highlighting overlay colors each line as you type:
   </p>
   <ul>
     <li><span class="clr-green">Green</span> — line was successfully parsed as a target</li>
@@ -825,7 +839,7 @@
 
   <h3>4.7 Sending a Target to the Telescope</h3>
   <p>
-    The <strong>Load to Telescope</strong> button sits in its own bar between the Parsing Options and the table. It is always visible but stays disabled until a table row is selected.
+    The <strong>Load to Telescope</strong> button sits in its own bar between the Parsing Options and the table. It is always visible but stays disabled until exactly one table row is selected — with two or more targets selected (§4.3) it stays disabled, since the TCS can only be sent one target's coordinates at a time.
     Clicking it sends a <code>COORDS</code> command to the P200 TCS over a direct network connection (see Appendix B for the command format).
   </p>
   <p>The button shows a brief status as the command is processed:</p>
@@ -859,7 +873,7 @@
 
   <h3>4.9 Saving a Target List</h3>
   <p>
-    Click <strong>Save Target List</strong> in the panel header to open the file browser in save mode (§7). A <em>Filename</em> field appears, pre-filled with the name of the currently loaded list, and the action button reads <strong>Save Here</strong>. Navigate to the directory you want, adjust the filename, and click <strong>Save Here</strong> to write the current text — including any edits, additions and deletions — either over the original file or to a new one. Clicking an existing file copies its name into the field, so overwriting is deliberate rather than accidental.
+    Click <strong>Save Target List</strong> in the panel header to open the file browser in save mode (§7). A <em>Filename</em> field appears, pre-filled with the name of the currently loaded list, and the action button reads <strong>Save Here</strong>. Navigate to the directory you want, adjust the filename, and click <strong>Save Here</strong> to write the current text (including any edits, additions and deletions) either over the original file or to a new one. Clicking an existing file copies its name into the field, so overwriting is deliberate rather than accidental.
   </p>
   <div class="note">
     <strong>Note:</strong> saves are confined to the Observer1 target directory tree. Some older target lists are owned by stale accounts and cannot be written in place; in that case FACSUM replaces the file rather than failing, which also transfers ownership going forward.
@@ -870,12 +884,12 @@
 <!-- ══════════════════════════════════════════════════════════════
      §5  SKY DISPLAY
 ══════════════════════════════════════════════════════════════ -->
-<div class="section page-break">
+<div class="section">
   <h2><span class="sec-num">5</span>Sky Display</h2>
 
   <figure>
-    <img src="manual_assets/panel_sky.png" alt="Sky display with all-sky camera overlay and solar system bodies plotted">
-    <figcaption>Figure 5 — Sky Display with the all-sky camera overlay and target list active. Orange dots with labels show the WIRC photometric standards. The cyan <em>P200</em> fiducial marks the current telescope pointing. Yellow markers show solar system bodies. The dashed orange ring is the 6.5° altitude limit; the heavier red line is the meridian.</figcaption>
+    <img src="manual_assets/panel_sky.png" data-w="0.720" alt="Sky display showing two selected targets' full-night path traces in distinct colors, each with red/green pointing-limit crossing markers" class="fig-mid">
+    <figcaption>Figure 5 — Sky Display with two targets selected from the demo list (§4.3), each drawn in its own color with a full-night path trace (§5.7). <em>M 13</em> (cyan, top) only meets the P200's mechanical HA limit at extreme hour angles, long after it would have set. <em>S233-D</em> (pink, bottom), a low-declination demonstration target, is cut off by that same limit (the red/green dots) well before the horizon would bind. The dashed orange ring is the 6.5° altitude limit; the heavier red line is the meridian. The all-sky overlay and planet markers are switched off here to keep the paths legible.</figcaption>
   </figure>
 
   <p>
@@ -884,7 +898,7 @@
 
   <h3>5.1 Sky Projection &amp; Grid</h3>
   <p>
-    The sky canvas uses an <strong>azimuthal equidistant projection</strong> looking straight up from Palomar Mountain. The zenith is at the centre; objects closer to the horizon appear closer to the edge of the circle.
+    The sky canvas uses an <strong>azimuthal equidistant projection</strong> looking straight up from Palomar Mountain. The zenith is at the center; objects closer to the horizon appear closer to the edge of the circle.
   </p>
   <p>
     Orientation follows standard astronomical convention: <strong>North is up, East is to the left</strong>. The grid is fixed in hour-angle/declination space, so an object transiting the meridian appears on the meridian line, and objects at large hour angles appear toward the east or west edges.
@@ -893,13 +907,13 @@
   <table class="t no-break">
     <thead><tr><th>Element</th><th>Appearance</th><th>Meaning</th></tr></thead>
     <tbody>
-      <tr><td>Declination circles</td><td>Faint blue rings every 10°</td><td>Lines of constant declination; labelled every 20° where they cross the meridian</td></tr>
-      <tr><td>Hour angle lines &amp; Meridian</td><td><span class="clr-red">Red</span> lines at ±2 h, ±4 h, ±6 h; the meridian (HA = 0 h) drawn thicker and brighter</td><td>Lines of constant HA, labelled at their Dec +30° crossing (west of the meridian positive); objects cross the meridian at their highest elevation</td></tr>
-      <tr><td>Altitude limit</td><td><span class="clr-orange">Orange</span> dashed ring, labelled <em>6.5°</em></td><td>The P200 elevation limit — avoid pointing inside this ring</td></tr>
+      <tr><td>Declination circles</td><td>Faint blue rings every 10°</td><td>Lines of constant declination; labeled every 20° where they cross the meridian</td></tr>
+      <tr><td>Hour angle lines &amp; Meridian</td><td><span class="clr-red">Red</span> lines at ±2 h, ±4 h, ±6 h; the meridian (HA = 0 h) drawn thicker and brighter</td><td>Lines of constant HA, labeled at their Dec +30° crossing (west of the meridian positive); objects cross the meridian at their highest elevation</td></tr>
+      <tr><td>Altitude limit</td><td><span class="clr-orange">Orange</span> dashed ring, labeled <em>6.5°</em></td><td>The P200 elevation limit — avoid pointing inside this ring</td></tr>
       <tr><td>Horizon circle</td><td>Cyan outer ring</td><td>The horizon (altitude = 0°)</td></tr>
       <tr><td>Cardinal labels</td><td>N, E, S, W outside the ring</td><td>Compass directions</td></tr>
-      <tr><td>Telescope crosshair</td><td><span class="clr-cyan">Cyan</span> circle + lines + square, labelled <em>P200</em></td><td>Current telescope pointing from live TCS telemetry. Always rendered on top of target dots and body labels.</td></tr>
-      <tr><td>Target dots</td><td><span class="clr-orange">Orange</span> dots with name labels</td><td>Parsed targets above the horizon; the selected target has a larger, paler dot plus a crosshair</td></tr>
+      <tr><td>Telescope crosshair</td><td><span class="clr-cyan">Cyan</span> circle + lines + square, labeled <em>P200</em></td><td>Current telescope pointing from live TCS telemetry. Always rendered on top of target dots and body labels.</td></tr>
+      <tr><td>Target dots</td><td><span class="clr-orange">Orange</span> dots with name labels</td><td>Parsed targets above the horizon; each selected target has a larger, paler dot plus a crosshair and a full-night path trace (§5.7) — in its own color when several targets are selected at once</td></tr>
     </tbody>
   </table>
 
@@ -909,13 +923,19 @@
   <div class="note">
     <strong>Note:</strong> targets, solar-system bodies and the telescope crosshair all require LST from the telemetry stream. With the TCS disconnected the grid is still drawn, but nothing is plotted on it.
   </div>
+  <div class="note">
+    <strong>Note:</strong> the dashed <em>6.5°</em> ring is the horizon limit only. A target can also become unreachable at a higher elevation because of the P200's mechanical hour-angle/declination pointing envelope — see §5.7 and §6.1, where both limits are combined into a single availability check.
+  </div>
 
   <h3>5.2 All-Sky Camera Overlay</h3>
   <p>
     Check <strong>AllSky</strong> in the panel header to overlay the live Palomar all-sky camera image on the sky projection. The image is fetched every 30 seconds through a server-side proxy on Observer1 (which caches it for 30 seconds so many browsers can share one camera fetch) and composited at 55 % opacity.
   </p>
   <p>
-    The overlay is not simply pasted on: FACSUM remaps the fisheye image pixel by pixel, using the lens calibration from the original FACSUM <code>telescope.cfg</code>, so that features in the camera image land on their true altitude and azimuth in the equidistant grid. If the browser cannot read the image pixels, it silently falls back to a plain crop-and-rotate, which is close but not geometrically exact.
+    The overlay is not simply pasted on: FACSUM remaps the fisheye image pixel by pixel, using the lens distortion coefficients from the original FACSUM <code>telescope.cfg</code>, so that features in the camera image land on their true altitude and azimuth in the equidistant grid. If the browser cannot read the image pixels, it silently falls back to a plain crop-and-rotate, which is close but not geometrically exact.
+  </p>
+  <p>
+    The radius treated as the horizon is calibrated against the Moon's known altitude. One visible consequence: the outermost ring of the display is partly blank, because the camera's circular image is clipped top and bottom by its own sensor and the overlay extends out to the true horizon, reaching into that clipped region. Nothing is lost that the camera ever recorded.
   </p>
   <p>
     If the camera is unreachable (daytime, dome closed, network outage), the most recent successful image is retained and served until a new one arrives.
@@ -923,13 +943,13 @@
 
   <h3>5.3 Camera Alignment (Cam Align)</h3>
   <p>
-    Click <strong>Cam Align</strong> in the panel header for two calibration fields that fine-tune how the all-sky image sits on the grid. Adjust them while watching a recognisable feature — the Moon, a bright planet, or the dome slit — and the overlay redraws live as you type.
+    Click <strong>Cam Align</strong> in the panel header for two calibration fields that fine-tune how the all-sky image sits on the grid. Adjust them while watching a recognizable feature (the Moon, a bright planet, or the dome slit) and the overlay redraws live as you type.
   </p>
 
   <table class="t no-break">
     <thead><tr><th>Field</th><th>Default</th><th>Range</th><th>Effect</th></tr></thead>
     <tbody>
-      <tr><td><strong>Rotation ° CW</strong></td><td>−13</td><td>−180 to 180, 0.5° steps</td><td>Rotates the camera image clockwise about the zenith to align its north with the grid's north</td></tr>
+      <tr><td><strong>Rotation ° CW</strong></td><td>−10.5</td><td>−180 to 180, 0.5° steps</td><td>Rotates the camera image clockwise about the zenith to align its north with the grid's north</td></tr>
       <tr><td><strong>Scale</strong></td><td>1.0</td><td>0.5 to 2.0, 0.005 steps</td><td>Scales the camera field of view. Values below 1 zoom the camera image in, pushing its horizon beyond the canvas edge.</td></tr>
     </tbody>
   </table>
@@ -938,10 +958,19 @@
     Both values are stored in the browser, so an alignment you establish once survives page reloads on that workstation. They affect only the overlay — never the projection, the grid, or any computed position.
   </p>
 
+
+  <div class="warn">
+    <strong>If the overlay looks mis-aligned, check the stored value.</strong> Because these fields are saved in the browser, a workstation that has ever had Cam Align adjusted keeps its own saved number rather than the default shown above. Type the default into the Rotation field once on that workstation (or clear the browser's site data) to restore it.
+  </div>
+
+  <p>
+    The cardinal markers around the sky display deliberately do <em>not</em> rotate with the camera image. They mark the true sky frame that every other overlay (the coordinate grid, the target dots, the telescope crosshair) is drawn in, and they are the fixed reference you align the camera image <em>to</em>. If they moved with the image, there would be nothing to calibrate against.
+  </p>
+
   <h3>5.4 Markers (Moon, Sun &amp; Planets)</h3>
 
   <figure>
-    <img src="manual_assets/markers_dropdown.png" alt="Markers dropdown showing Moon and Sun &amp; Planets checkboxes" class="fig-mid">
+    <img src="manual_assets/markers_dropdown.png" data-w="0.720" alt="Markers dropdown showing Moon and Sun &amp; Planets checkboxes" class="fig-mid">
     <figcaption>Figure 6 — The Markers dropdown in the Sky Display header.</figcaption>
   </figure>
 
@@ -949,12 +978,13 @@
     Click <strong>Markers</strong> in the panel header to open a small dropdown with two checkboxes, both enabled by default:
   </p>
   <ul>
-    <li><strong>Moon</strong> — draws a faint disc outline at the computed lunar position with the illuminated limb traced on top, so the marker reflects the current phase (crescent, quarter, gibbous, full). The phase comes from the Sun–Moon elongation and the position from the Meeus simplified lunar theory (accuracy ≈ ±1°). This checkbox also controls the Moon's airmass curve in the plot below (§6.1).</li>
+    <li><strong>Moon</strong> — draws a faint disc outline at the computed lunar position with the illuminated limb traced on top, so the marker reflects the current phase (crescent, quarter, gibbous, full). The phase comes from the Sun–Moon elongation. The position is computed from the full Meeus lunar theory and corrected for the observer's position on the Earth's surface, giving an accuracy better than 0.02°. This checkbox also controls the Moon's airmass curve in the plot below (§6.1).</li>
     <li><strong>Sun &amp; Planets</strong> — draws yellow dots for the Sun, Mercury, Venus, Mars, Jupiter, Saturn, Uranus, and Neptune, with marker radii scaled roughly by apparent brightness and size. Positions come from Keplerian elements (Meeus Table 31.a, accuracy ≈ ±1–2°). All calculations are done in the browser from the current time; no external ephemeris service is needed.</li>
   </ul>
   <p>
     Bodies below the horizon are not drawn. Toggle <strong>Labels</strong> in the header to show or hide body name labels next to each marker.
   </p>
+
 
   <h3>5.5 Display Targets — All / Selected</h3>
   <p>
@@ -962,10 +992,10 @@
   </p>
   <ul>
     <li><strong>All</strong> (default) — every target above the horizon is drawn, each with its name label.</li>
-    <li><strong>Selected</strong> — only the currently selected target is drawn.</li>
+    <li><strong>Selected</strong> — only the currently selected target(s) are drawn, each in its own color when more than one is selected (§4.3).</li>
   </ul>
   <p>
-    Click the switch, or either of the two labels, to change modes. <em>Selected</em> is the practical choice with long lists, where dozens of labelled dots can bury the telescope crosshair and the all-sky image.
+    Click the switch, or either of the two labels, to change modes. <em>Selected</em> is the practical choice with long lists, where dozens of labeled dots can bury the telescope crosshair and the all-sky image.
   </p>
 
   <h3>5.6 Zoom &amp; Pan</h3>
@@ -983,7 +1013,25 @@
   </table>
 
   <p>
-    When zoomed in, <strong>click and drag</strong> on the canvas to pan; panning is clamped so the sky circle cannot be dragged entirely out of view. The cursor changes to a grab icon when panning is available. The entire sky circle — grid, markers, cardinal labels, and all-sky overlay — scales and pans together uniformly.
+    When zoomed in, <strong>click and drag</strong> on the canvas to pan; panning is clamped so the sky circle cannot be dragged entirely out of view. The cursor changes to a grab icon when panning is available. The entire sky circle (grid, markers, cardinal labels, and all-sky overlay) scales and pans together uniformly.
+  </p>
+
+  <h3>5.7 Target Path Trace</h3>
+  <p>
+    Every selected target (§4.3) is drawn with its full rise-to-set path across the current observing night, extending well past dusk and dawn on each side so the whole arc is visible, not just the dark-time portion. With several targets selected, each path is drawn in that target's own color, matching its airmass curve (§6.1).
+  </p>
+  <ul>
+    <li>A <strong>solid</strong> segment means the target is both in dark time and within the P200's full pointing envelope (horizon and mechanical HA/Dec limits combined, §6.1), i.e. genuinely observable right then.</li>
+    <li>A <strong>dim, dashed</strong> segment means one of those conditions fails — daylight, or beyond a pointing limit.</li>
+    <li>Small circular markers appear where the path crosses a boundary: <span class="clr-orange">amber</span> for sunset/sunrise, and red/green where the target enters or clears a pointing limit — the same convention as the Airmass Plot's crossing markers.</li>
+  </ul>
+  <p>
+    Hover over any of these markers to see a color-matched tooltip (<em>Sunset</em>, <em>Sunrise</em>, <em>Limit</em>, or <em>Available</em>) explaining what it means. The tooltip is colored to match the marker and appears above the cursor.
+  </p>
+
+
+  <p>
+    Hovering over the Airmass Plot (§6.3) also drops a small hover dot onto each selected target's path here, at the sky position corresponding to that moment in the night — a quick way to see where a target will be at a specific time without leaving the sky display.
   </p>
 </div>
 
@@ -991,12 +1039,12 @@
 <!-- ══════════════════════════════════════════════════════════════
      §6  AIRMASS PLOT
 ══════════════════════════════════════════════════════════════ -->
-<div class="section page-break">
+<div class="section">
   <h2><span class="sec-num">6</span>Airmass Plot</h2>
 
   <figure>
-    <img src="manual_assets/airmass_plot.png" alt="Airmass plot showing a target's airmass curve across the observing night">
-    <figcaption>Figure 7 — Airmass Plot showing the selected target S754-C (solid curve, colour-graded green→yellow→orange→red by airmass) alongside the Moon's curve (yellow dashed). The x-axis spans the observing night in UT (top row) and Pacific Time (bottom row).</figcaption>
+    <img src="manual_assets/airmass_plot.png" data-w="0.88" alt="Airmass plot showing a target's airmass curve dimming outside the P200 pointing limit, with red/green LIMIT and AVAILABLE crossing markers">
+    <figcaption>Figure 7 — Airmass Plot for <em>S233-D</em>, a demonstration target whose low declination (−35°) puts it out of the P200's mechanical pointing envelope well before it would otherwise set. The curve is color-graded green→yellow→orange→red by airmass while within limits, and dims to gray outside them; the green/red dots and <em>AVAILABLE</em>/<em>LIMIT</em> labels mark exactly where it crosses. The Moon's curve (yellow dashed) is shown for reference. The x-axis spans the observing night in UT (top row) and Pacific Time (bottom row).</figcaption>
   </figure>
 
   <p>
@@ -1015,21 +1063,25 @@
   <table class="t">
     <thead><tr><th>Element</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><strong>X-axis</strong></td><td>UT hours across the night, gridded every 2 hours (top label row), with Pacific Time equivalents below (labelled PDT or PST as appropriate)</td></tr>
-      <tr><td><strong>Y-axis</strong></td><td>Airmass from 1.0 (zenith) to 4.5, gridded at 1.0, 1.5, 2.0, 2.5, 3.0 and 4.0. Lower is better.</td></tr>
+      <tr><td><strong>X-axis</strong></td><td>UT hours across the night, gridded every 2 hours (top label row), with Pacific Time equivalents below (labeled PDT or PST as appropriate)</td></tr>
+      <tr><td><strong>Y-axis</strong></td><td>Airmass from 1.0 (zenith) to 4.5, gridded at 1.0, 1.5, 2.0, 2.5, 3.0 and 4.0. Lower is better. A second axis appears along the right edge when <strong>Parallactic</strong> is enabled (§6.5); the airmass scale is unaffected by it.</td></tr>
       <tr><td>Dark blue shading</td><td>The 30-minute margins before sunset and after sunrise — daylight, not observing time</td></tr>
       <tr><td><span class="clr-orange">Amber dashed lines</span></td><td>Exact sunset and sunrise times</td></tr>
-      <tr><td>Cyan dashed line</td><td>Current time, labelled <strong>NOW</strong> in the margin just below the plot. Derived from the TCS UT field, so it reflects observatory time rather than the workstation clock.</td></tr>
-      <tr><td>Yellow dashed curve</td><td>The Moon's airmass across the night, labelled <em>Moon</em>. Shown whenever the <strong>Moon</strong> marker is enabled in the Sky Display's Markers dropdown.</td></tr>
-      <tr><td>Colour-graded target curve</td><td>
-        Target airmass, graded continuously by value:
+      <tr><td>Cyan dashed line</td><td>Current time, labeled <strong>NOW</strong> in the margin just below the plot. Derived from the TCS UT field, so it reflects observatory time rather than the workstation clock.</td></tr>
+      <tr><td>Yellow dashed curve</td><td>The Moon's airmass across the night, labeled <em>Moon</em>. Shown whenever the <strong>Moon</strong> marker is enabled in the Sky Display's Markers dropdown.</td></tr>
+      <tr><td>Color-graded target curve</td><td>
+        For a single selected target, airmass graded continuously by value:
         <span class="clr-green">green</span> at 1.0,
         <span class="clr-yellow">yellow</span> at 1.5,
         <span class="clr-orange">orange</span> at 2.0,
         <span class="clr-red">red</span> at 3.0 and above.
-        The curve breaks wherever the target is below the horizon or beyond airmass 4.5.
+        With several targets selected (§4.3), each is drawn instead as a flat line in its own color, so distinct targets stay identifiable where a value gradient could not tell them apart.
+        In both cases the curve breaks wherever the target is beyond airmass 4.5, and dims wherever it is below the P200's full pointing envelope (see below), even while still above the horizon.
       </td></tr>
-      <tr><td>White dot on curve</td><td>The target's airmass at the NOW line, with a numeric label</td></tr>
+      <tr><td>Red / green crossing markers</td><td>
+        A small dot marks every point where the target crosses into or out of the P200's pointing limits (the mechanical hour-angle/declination envelope combined with the 6.5° horizon, whichever binds first), <span class="clr-red">red</span> entering a limit, <span class="clr-green">green</span> clearing one. For a single selected target these are also labeled <em>LIMIT</em> / <em>AVAILABLE</em>; labels are omitted with several targets selected to avoid overlapping text. The same crossings appear on the target's path trace on the Sky Display (§5.7).
+      </td></tr>
+      <tr><td>White dot on curve</td><td>The target's airmass at the NOW line, with a numeric label for a single selection (ringed red if the target is presently beyond a limit); a smaller unlabeled ring per target when several are shown.</td></tr>
     </tbody>
   </table>
 
@@ -1041,7 +1093,7 @@
   </p>
   <ul>
     <li><strong>Drag left/right</strong> inside the plot to scroll the time axis. The cursor changes to a grabbing hand while dragging.</li>
-    <li>Click the <strong>⌂ home button</strong> (bottom-left of the plot) to snap back to the default view centred on the current night.</li>
+    <li>Click the <strong>⌂ home button</strong> (bottom-left of the plot) to snap back to the default view centered on the current night.</li>
   </ul>
   <p>The NOW line, twilight shading, sunrise/sunset markers and all curves scroll together, so relative timing is always clear. Curves are clipped at the plot border rather than spilling into the axis margins.</p>
 
@@ -1052,7 +1104,8 @@
   <ul>
     <li>A dashed hairline follows the mouse horizontally</li>
     <li>A time label (e.g. <em>04:30 UT</em>) appears along the bottom inside edge of the plot</li>
-    <li>A boxed airmass readout, outlined and coloured to match the curve, floats beside the cursor with a dot marking the exact point on the selected target's curve</li>
+    <li>A boxed airmass readout, outlined and colored to match the curve, floats beside the cursor with a dot marking the exact point on the selected target's curve. With several targets selected each gets a dot in its own color but no readout box, since overlapping boxes at one cursor position would be unreadable.</li>
+      <li>When <strong>Parallactic</strong> is enabled (§6.5), a second boxed readout gives the slit angle at the same instant. It steps aside automatically if it would otherwise land on the airmass readout, so both stay legible wherever the two curves cross.</li>
   </ul>
   <p>Moving the mouse out of the plot area dismisses the cursor. Hovering does not interfere with drag-to-pan — a small drag threshold (4 px) distinguishes the two gestures.</p>
 
@@ -1060,26 +1113,55 @@
   <p>
     Click the <strong>AIRMASS PLOT</strong> header bar to collapse or expand the section; collapsing frees the vertical space for the sky display. Drag the handle just above the header to change the plot's height while it is open. The handle is hidden while the section is collapsed, and no drawing work is done for a collapsed plot.
   </p>
+
+  <h3>6.5 Parallactic Angle</h3>
+
+  <figure>
+    <img src="manual_assets/airmass_parallactic.png" data-w="1.000" alt="Airmass Plot with the Parallactic trace enabled, showing the right-hand angle axis">
+    <figcaption>Figure 8 — The Airmass Plot with <em>Parallactic</em> enabled, for NGC 7331. The dashed orange trace is read against the new right-hand axis (0–360°); the solid graded curve and the left-hand airmass axis are unchanged. The near-vertical segment just after 05 h is not a break in the trace — NGC 7331 passes 1.1° from the zenith, and a target that close to overhead sweeps most of its parallactic range within minutes of transit.</figcaption>
+  </figure>
+  <p>
+    Tick <strong>Parallactic</strong>, next to the target name in the plot's header bar, to add a dashed trace of each selected target's parallactic angle across the night. The angle is read on a second axis that appears along the <em>right</em> edge of the plot, running from 0° at the bottom to 360° at the top; the airmass scale on the left is unchanged. The checkbox is off every time the page loads; switch it on when you need it. Like the Sky Display's own AllSky, Labels and Markers checkboxes, it is not remembered between sessions.
+  </p>
+  <p>
+    Angles are given in <strong>0°–360°</strong>, matching the range the TCS accepts for a ring angle, so the number shown can be typed in without first converting a negative value.
+  </p>
+
+  <table class="t no-break">
+    <thead><tr><th>Element</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Dashed trace</td><td>Parallactic angle over the night, in the target's own color (orange for a single selection). Dashed throughout, to distinguish it from the solid airmass curve on the left axis.</td></tr>
+      <tr><td>Dot at <strong>NOW</strong></td><td>The angle at the current time. With one target selected, the value is printed beside it — this is the number to set the slit to.</td></tr>
+      <tr><td>Dot under the cursor</td><td>The angle at whatever time you hover, alongside the airmass readout (§6.3), so you can read ahead to a planned exposure.</td></tr>
+      <tr><td>Faded trace</td><td>Same convention as the airmass curve: the target is below the practical horizon or outside the P200's pointing limits there (§6.1).</td></tr>
+      <tr><td>Break in the trace</td><td>Not a gap in coverage — see the note below.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <strong>Why the trace sometimes jumps from one edge to the other.</strong> For a target that passes <em>north</em> of the zenith (declination above Palomar's +33.4°) the angle passes smoothly through 180° at transit. For a target that passes <em>south</em> of the zenith, it instead runs down to 0° and reappears at 360° (or the reverse), because those are the same slit orientation and the plot does not draw a line across the wrap. Nothing is wrong, and no time is missing from the trace. The angle also swings fastest for targets passing close to the zenith, which is both when slit alignment matters most and when a fixed angle goes stale quickest. The effect is larger than it may look: NGC 7331 in Figure 8 passes 1.1° from the zenith and its parallactic angle moves about 125° in the quarter hour around transit, against roughly 1–2° per quarter hour several hours either side.
+  </div>
+
+  <div class="warn">
+    <strong>The angle is geometric only.</strong> FACSUM computes the parallactic angle from hour angle, declination and latitude. It does not know your instrument's slit position-angle convention or any rotator zero-point offset, and it applies no correction for flexure or for how a given instrument defines PA. Convert to your instrument's convention before dialling a number in, and confirm against the instrument's own display.
+  </div>
 </div>
 
 
 <!-- ══════════════════════════════════════════════════════════════
      §7  TARGET FILE BROWSER
 ══════════════════════════════════════════════════════════════ -->
-<div class="section page-break">
+<div class="section">
   <h2><span class="sec-num">7</span>Target File Browser</h2>
 
   <figure>
-    <img src="manual_assets/modal_sftp_crop.png" alt="Target file browser modal showing a directory listing" class="fig-mid">
-    <figcaption>Figure 8 — The file browser opened at <code>/observer/observer/targets</code>. Directories are listed first in orange; the selected file is highlighted.</figcaption>
+    <img src="manual_assets/modal_sftp_crop.png" data-w="0.580" alt="Target file browser modal showing a directory listing" class="fig-mid">
+    <figcaption>Figure 9 — The file browser opened at <code>/observer/observer/targets</code>. Directories are listed first in orange; the selected file is highlighted.</figcaption>
   </figure>
 
   <p>
     The file browser gives you access to the target-list directory on <strong>observer1.palomar.caltech.edu</strong>. It opens when you click <strong>+ Load Target List</strong> (open mode) or <strong>Save Target List</strong> (save mode) in the Target Lists panel header.
   </p>
-  <div class="note">
-    <strong>Changed in Revision 1.2:</strong> FACSUM now runs on Observer1 itself, so the browser reads and writes the filesystem directly. The former SFTP client — and the username/password dialog it required — has been removed entirely.
-  </div>
 
   <h3>Navigating and opening files</h3>
 
@@ -1098,7 +1180,7 @@
   </table>
 
   <p>
-    The browser opens at <code>/observer/observer/targets</code> and, within a single page load, reopens wherever you last were. Reloading the page — or clicking <strong>✕ Clear List</strong> — returns it to the default directory.
+    The browser opens at <code>/observer/observer/targets</code> and, within a single page load, reopens wherever you last were. Reloading the page (or clicking <strong>✕ Clear List</strong>) returns it to the default directory.
   </p>
   <p>
     Access is confined to that directory and its subdirectories: <strong>↑ Up</strong> stops at the root and any path outside the tree is rejected by the server. The status line at the bottom of the dialog reports the number of files and folders in the current directory, or an error if a directory cannot be read.
@@ -1112,7 +1194,7 @@
 <!-- ══════════════════════════════════════════════════════════════
      APPENDIX A — FILE FORMATS
 ══════════════════════════════════════════════════════════════ -->
-<div class="section page-break">
+<div class="section">
   <h2><span class="sec-num app">A</span>Appendix A — Target File Formats</h2>
 
   <p>
@@ -1150,7 +1232,7 @@
   <ul>
     <li><strong>Decimal coordinates</strong> are accepted and converted to sexagesimal on load. An RA of 24 or less is read as <em>hours</em>; anything larger (up to 360) is read as <em>degrees</em>. Dec is always degrees, −90 to +90. Converted cells are shown in italics, and hovering one reveals what was in the file (e.g. <em>Parsed as 272.617°</em>).</li>
     <li><strong>Sexagesimal values must be complete</strong> — <code>10:08:22.4</code> parses, <code>10:08</code> does not.</li>
-    <li><strong>Space-delimited files</strong> may split coordinates into separate tokens (<code>HZ_Her 18 10 28.1 +30 48 22 2000</code>); FACSUM recognises this when there are at least seven tokens and the second is a bare number.</li>
+    <li><strong>Space-delimited files</strong> may split coordinates into separate tokens (<code>HZ_Her 18 10 28.1 +30 48 22 2000</code>); FACSUM recognizes this when there are at least seven tokens and the second is a bare number.</li>
     <li><strong>Multi-word names</strong> are supported in whitespace-delimited files provided the coordinates are written with colons (<code>M 57 18:53:35.1 +33:01:45</code>) — everything before the first sexagesimal token is taken as the name.</li>
   </ul>
 
@@ -1194,18 +1276,19 @@ Encke             08 44 12.0  +18 22 05   2000  pm=41.7,-12.3  ! comet</pre>
 
   <h3>A.3 NGPS Format</h3>
   <p>
-    Column-based format used by the <strong>Next Generation Palomar Spectrograph (NGPS)</strong> observing tool. FACSUM recognises it automatically from a header row whose first three columns are <code>NAME</code>, <code>RA</code>, and <code>DECL</code>. Detection takes precedence over CSV and PTIC, and the File Type radio buttons do not apply.
+    Column-based format used by the <strong>Next Generation Palomar Spectrograph (NGPS)</strong> observing tool. FACSUM recognizes it automatically from a header row whose first three columns are <code>NAME</code>, <code>RA</code>, and <code>DECL</code>. Detection takes precedence over CSV and PTIC, and the File Type radio buttons do not apply.
   </p>
   <p>
-    Unlike CSV and PTIC, NGPS coordinates are given in <strong>decimal degrees</strong> (J2000) for both axes. FACSUM converts them for display and for sending to the TCS, and converts back when saving.
+    NGPS coordinates may be written either as <strong>decimal degrees</strong> (J2000) for both axes (the form the NGPS tool itself produces) or as ordinary <strong>sexagesimal</strong> values (<code>16:31:33.810</code>, <code>+30:08:46.40</code>), which some list generators emit instead. FACSUM detects which is in use line by line, so a file written either way loads without any setting to change. Coordinates are converted as needed for display and for sending to the TCS.
   </p>
+
 
   <table class="t no-break">
     <thead><tr><th>Column</th><th>Required?</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><strong>NAME</strong></td><td>Yes</td><td>Target name</td></tr>
-      <tr><td><strong>RA</strong></td><td>Yes</td><td>Right Ascension in decimal degrees (J2000)</td></tr>
-      <tr><td><strong>DECL</strong></td><td>Yes</td><td>Declination in decimal degrees (J2000)</td></tr>
+      <tr><td><strong>RA</strong></td><td>Yes</td><td>Right Ascension, J2000 — decimal degrees or <code>HH:MM:SS.s</code></td></tr>
+      <tr><td><strong>DECL</strong></td><td>Yes</td><td>Declination, J2000 — decimal degrees or <code>±DD:MM:SS.s</code></td></tr>
       <tr><td><strong>OFFSET_RA</strong></td><td>No</td><td>RA offset (arcsec); shown in the <em>Offset RA</em> column</td></tr>
       <tr><td><strong>OFFSET_DEC</strong></td><td>No</td><td>Dec offset (arcsec); shown in the <em>Offset Dec</em> column</td></tr>
       <tr><td><strong>COMMENT</strong></td><td>No</td><td>Free-text comment, shown in the <em>Comment</em> column</td></tr>
@@ -1216,39 +1299,50 @@ Encke             08 44 12.0  +18 22 05   2000  pm=41.7,-12.3  ! comet</pre>
   </table>
 
   <p>
-    Both comma-separated and space-delimited NGPS files are supported. In space-delimited files the <code>COMMENT</code> column may contain spaces, so FACSUM parses the trailing structured columns from the end of the line inward and treats whatever is left as the comment. Other NGPS spectrograph columns — <code>BINSPAT</code>, <code>BINSPECT</code>, <code>SLITANGLE</code>, <code>SLITWIDTH</code>, <code>AIRMASS_MAX</code>, <code>WRANGE_LOW</code>, <code>WRANGE_HIGH</code>, <code>CHANNEL</code> — are recognised for that purpose but are not displayed.
+    Both comma-separated and space-delimited NGPS files are supported. In space-delimited files the <code>COMMENT</code> column may contain spaces, so FACSUM parses the trailing structured columns from the end of the line inward and treats whatever is left as the comment. Other NGPS spectrograph columns (<code>BINSPAT</code>, <code>BINSPECT</code>, <code>SLITANGLE</code>, <code>SLITWIDTH</code>, <code>AIRMASS_MAX</code>, <code>WRANGE_LOW</code>, <code>WRANGE_HIGH</code>, <code>CHANNEL</code>) are recognized for that purpose but are not displayed.
   </p>
 
-  <p><strong>Example — space-delimited:</strong></p>
+  <p><strong>Example — space-delimited, decimal degrees:</strong></p>
   <pre># NGPS target list
 NAME             RA         DECL       COMMENT          PRIORITY  MAGNITUDE  MAGFILTER  EXPTIME
 HZ_Her           272.6170   30.8061    X-ray binary      1         8.9        V          600
 NGC_6543         269.6392   66.6330    Cat Eye Nebula    2        11.2        V          300</pre>
 
+  <p><strong>Example — comma-separated, sexagesimal:</strong></p>
+  <pre>NAME,RA,DECL,SLITWIDTH,EXPTIME,NEXP,AIRMASS_MAX,COMMENT
+P330E,16:31:33.810,+30:08:46.40,SET 1.5,SET 60,2,1.8,CALSPEC standard
+P2190,16:01:01.838,+36:56:19.70,SET 1.5,SET 300,2,1.5,visit 20:16-20:32 PDT</pre>
+
   <h3>A.4 How Edits Are Written Back</h3>
   <p>
-    Editing a cell (§4.4), deleting a row, or adding a target rewrites the raw text — which is what a save actually writes to disk — and each touched line is re-serialised in its own format:
+    Editing a cell (§4.4), deleting a row, or adding a target rewrites the raw text (which is what a save actually writes to disk) and each touched line is re-serialised in its own format:
   </p>
   <table class="t no-break">
     <thead><tr><th>Line format</th><th>Written back as</th></tr></thead>
     <tbody>
       <tr><td>CSV</td><td>The same delimiter the line was read with; the name is quoted if it contains that delimiter. Rates are emitted as a pair (defaulting to <code>0</code>) if any rate or proper motion is set, followed by the proper-motion pair when present.</td></tr>
       <tr><td>PTIC</td><td>17-character padded name, six coordinate tokens, epoch, then <code>pm=&lt;rateRA&gt;,&lt;rateDec&gt;</code> when rates are set.</td></tr>
-      <tr><td>NGPS</td><td>The file's own column order and delimiter, with RA/Dec converted back to decimal degrees (6 dp).</td></tr>
+      <tr><td>NGPS</td><td>The file's own column order and delimiter, with RA/Dec written back in the same notation the line was read in — decimal degrees (6 dp) or sexagesimal — so one edited line does not end up in a different format from the rest of the file.</td></tr>
       <tr><td>Added via the form</td><td>A comma-delimited CSV line.</td></tr>
       <tr><td>Notes (any format)</td><td>Appended as a trailing <code>!comment</code>.</td></tr>
     </tbody>
   </table>
   <p>
-    Untouched lines — including comments, blank lines and lines that failed to parse — are preserved byte-for-byte. One consequence is worth noting for NGPS files: because a structured <code>COMMENT</code> column and an inline <code>!comment</code> are indistinguishable once parsed, an edited NGPS line settles on the trailing <code>!comment</code> form and leaves its COMMENT column empty.
+    Untouched lines (including comments, blank lines and lines that failed to parse) are preserved byte-for-byte. One consequence is worth noting for NGPS files: because a structured <code>COMMENT</code> column and an inline <code>!comment</code> are indistinguishable once parsed, an edited NGPS line settles on the trailing <code>!comment</code> form and leaves its COMMENT column empty.
   </p>
+
+  <div class="warn">
+    <strong>Editing an NGPS line discards its spectrograph columns.</strong> FACSUM reads and displays only <code>NAME</code>, <code>RA</code>, <code>DECL</code>, <code>OFFSET_RA</code>, <code>OFFSET_DEC</code>, <code>COMMENT</code>, <code>PRIORITY</code>, <code>MAGNITUDE</code>, <code>MAGFILTER</code> and <code>EXPTIME</code>. Any other column (<code>NEXP</code>, <code>SLITWIDTH</code>, <code>SLITANGLE</code>, <code>BINSPAT</code>, <code>BINSPECT</code>, <code>AIRMASS_MAX</code>, <code>NOTE</code>, and so on) is carried through untouched only for as long as you leave that line alone. Edit any cell on that row and save, and those columns are written back empty.
+    <br><br>
+    This matters only if you save over the original. Loading an NGPS list, selecting targets and sending them to the telescope never rewrites anything. If you need to edit an NGPS list that carries spectrograph settings, save it under a new name and keep the original for the instrument.
+  </div>
 </div>
 
 
 <!-- ══════════════════════════════════════════════════════════════
      APPENDIX B — COORDS COMMAND
 ══════════════════════════════════════════════════════════════ -->
-<div class="section page-break">
+<div class="section">
   <h2><span class="sec-num app">B</span>Appendix B — TCS COORDS Command Reference</h2>
 
   <p>
@@ -1298,7 +1392,7 @@ NGC_6543         269.6392   66.6330    Cat Eye Nebula    2        11.2        V 
 <!-- ══════════════════════════════════════════════════════════════
      APPENDIX C — FILES, LOGS & TROUBLESHOOTING
 ══════════════════════════════════════════════════════════════ -->
-<div class="section page-break">
+<div class="section">
   <h2><span class="sec-num app">C</span>Appendix C — Files, Logs &amp; Troubleshooting</h2>
 
   <p>
@@ -1315,7 +1409,7 @@ NGC_6543         269.6392   66.6330    Cat Eye Nebula    2        11.2        V 
       <tr><td><code>data/allsky_cache.jpg</code></td><td>Most recent all-sky camera frame, reused for 30 s and served if the camera is unreachable.</td></tr>
       <tr><td><code>data/daemon_YYYY-MM-DD.log</code></td><td>Daemon operational log — connects, disconnects, TCS errors. Rotated daily, kept 14 days.</td></tr>
       <tr><td><code>data/daemon_launch_YYYY-MM-DD.log</code></td><td>Captures a raw traceback if the daemon dies before its own logging starts. Normally empty.</td></tr>
-      <tr><td><code>data/webserver_YYYY-MM-DD.log</code></td><td>Output from the PHP built-in web server, written by <code>start_facsum.sh</code>. Rotated daily, kept 14 days.</td></tr>
+      <tr><td><code>data/webserver_YYYY-MM-DD.log</code></td><td>Diagnostic output from the PHP built-in web server, written by <code>start_facsum.sh</code>. The server sends <em>both</em> its access log and its error output to stderr, so <code>start_facsum.sh</code> filters that stream rather than redirecting it wholesale: per-request chatter (connection open/close, and every 2xx/3xx response) is dropped, while the startup banner, <code>Failed to listen&nbsp;…</code>, PHP warnings and fatals, and any 4xx/5xx response are kept. In normal operation the file grows by almost nothing — a healthy night may add only the one-line startup banner.<br><br>The filename is fixed when the server starts, and the server is reused across sessions, so the file currently being appended to is usually named for an earlier date than today. Files are pruned after 14 days, and any that exceeds 20&nbsp;MB is truncated in place as a safety net for a <code>php -S</code> process that stays alive (and keeps its log file open) for weeks at a time.</td></tr>
     </tbody>
   </table>
 
@@ -1328,7 +1422,7 @@ NGC_6543         269.6392   66.6330    Cat Eye Nebula    2        11.2        V 
 ./start_daemon.sh restart    # stop, then start
 ./start_daemon.sh stop       # stop</pre>
   <p>
-    The daemon can also be run in the foreground — <code>python3 tcs_daemon.py</code> — which is the fastest way to watch it negotiate with the TCS.
+    The daemon can also be run in the foreground (<code>python3 tcs_daemon.py</code>), which is the fastest way to watch it negotiate with the TCS.
   </p>
 
   <h3>C.3 Troubleshooting</h3>
@@ -1337,7 +1431,7 @@ NGC_6543         269.6392   66.6330    Cat Eye Nebula    2        11.2        V 
     <tbody>
       <tr>
         <td>Browser opens but the page fails to load</td>
-        <td>The web server on Observer1 did not start. <code>start_facsum.sh</code> prints diagnostics in this case — check whether a <code>php -S</code> process is running, what holds port 18080, and the tail of today's <code>webserver_*.log</code>. Rerunning the script is usually enough.</td>
+        <td>The web server on Observer1 did not start. <code>start_facsum.sh</code> prints diagnostics in this case — check whether a <code>php -S</code> process is running, what holds port 18080, and the tail of the most recently modified <code>data/webserver_*.log</code> (it is named for the day the server started, which is usually not today). Rerunning the script is usually enough.</td>
       </tr>
       <tr>
         <td>Header stays <em>Disconnected</em>, or reconnection gives up after 5 attempts</td>
@@ -1349,7 +1443,7 @@ NGC_6543         269.6392   66.6330    Cat Eye Nebula    2        11.2        V 
       </tr>
       <tr>
         <td>Fields freeze but nothing turns red</td>
-        <td>Expected behaviour during a short TCS outage — the display holds its last values for 12 s before it reports anything (§3.2).</td>
+        <td>Expected behavior during a short TCS outage — the display holds its last values for 12 s before it reports anything (§3.2).</td>
       </tr>
       <tr>
         <td>Airmass column shows "—" and the sky is empty</td>
@@ -1376,7 +1470,7 @@ NGC_6543         269.6392   66.6330    Cat Eye Nebula    2        11.2        V 
 
   <hr>
   <p style="font-size:8.5pt;color:#888;text-align:center;margin-top:18px;">
-    FACSUM Web Interface &nbsp;·&nbsp; Palomar Observatory, California Institute of Technology &nbsp;·&nbsp; Revision 1.2, August 2026
+    FACSUM Web Interface &nbsp;·&nbsp; Palomar Observatory, California Institute of Technology &nbsp;·&nbsp; Revision 1.5, September 2026
   </p>
 </div>
 

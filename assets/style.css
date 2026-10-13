@@ -614,6 +614,33 @@ details.parse-options-details:not([open]) .parse-options-summary::before { conte
 .hidden { display: none !important; }
 
 /* ── Targets table ───────────────────────────────────────────────────────── */
+.target-search-bar {
+  padding: 6px 12px;
+  background: var(--panel2);
+  border-bottom: 1px solid var(--sep);
+  flex-shrink: 0;
+}
+
+#target-search {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--orange);
+  border-radius: 3px;
+  color: var(--val-fg);
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  padding: 5px 9px;
+  outline: none;
+}
+
+#target-search:focus {
+  border-color: var(--orange);
+}
+
+#target-search::placeholder {
+  color: var(--dim-fg);
+}
+
 .tbl-wrap {
   flex: 1;
   overflow: auto;
@@ -627,16 +654,20 @@ details.parse-options-details:not([open]) .parse-options-summary::before { conte
   font-size: 1.05rem;
 }
 
-/* Column widths — fixed so squished rows don't wrap */
-#targets-tbl th:nth-child(1) { width:  46px; text-align: center; cursor: default; } /* ✓ */
-#targets-tbl th:nth-child(2) { width: 130px; } /* Name */
-#targets-tbl th:nth-child(3) { width: 124px; } /* RA */
-#targets-tbl th:nth-child(4) { width: 134px; } /* Dec */
-#targets-tbl th:nth-child(5) { width:  85px; } /* Epoch */
-#targets-tbl th:nth-child(6) { width:  80px; } /* Airmass */
-#targets-tbl th:nth-child(7) { width:  72px; } /* PM RA */
-#targets-tbl th:nth-child(8) { width:  72px; } /* PM Dec */
-#targets-tbl th:nth-child(9) { width: auto;  } /* Notes */
+/* Column widths — fixed so squished rows don't wrap. Selected by data-col
+   (not position) so a width follows its column when a user drags columns
+   into a different order — see applyColumnOrder() in app.js. */
+#targets-tbl th.obs-col            { width:  46px; text-align: center; cursor: default; } /* ✓ */
+#targets-tbl th[data-col="name"]   { width: 130px; } /* Name */
+#targets-tbl th[data-col="ra"]     { width: 124px; } /* RA */
+#targets-tbl th[data-col="dec"]    { width: 134px; } /* Dec */
+#targets-tbl th[data-col="epoch"]  { width:  85px; } /* Epoch */
+#targets-tbl th[data-col="airmass"]{ width:  80px; } /* Airmass */
+#targets-tbl th[data-col="pmRA"]   { width:  72px; } /* PM RA */
+#targets-tbl th[data-col="pmDec"]  { width:  72px; } /* PM Dec */
+#targets-tbl th[data-col="propRA"]  { width:  96px; } /* Prop RA */
+#targets-tbl th[data-col="propDec"] { width:  96px; } /* Prop Dec */
+#targets-tbl th[data-col="notes"]  { width: auto;  } /* Notes */
 
 /* Observed? column — hidden until a target list is loaded */
 #targets-tbl.no-observed .obs-col,
@@ -676,6 +707,10 @@ details.parse-options-details:not([open]) .parse-options-summary::before { conte
 #targets-tbl th[data-sort="asc"]::after  { content: ' ▲'; color: var(--orange); }
 #targets-tbl th[data-sort="desc"]::after { content: ' ▼'; color: var(--orange); }
 
+/* Column drag-to-reorder feedback */
+#targets-tbl th.col-dragging    { opacity: 0.4; }
+#targets-tbl th.col-drop-target { background: rgba(255, 184, 108, 0.25); }
+
 #targets-tbl td {
   padding: 4px 12px;
   border-bottom: 1px solid var(--sep);
@@ -686,8 +721,13 @@ details.parse-options-details:not([open]) .parse-options-summary::before { conte
 
 #targets-tbl tbody tr       { cursor: pointer; }
 #targets-tbl tr:hover td    { background: #1e1200; }
-#targets-tbody tr.selected td       { background: #2e1600; }
-#targets-tbody tr.selected:hover td { background: #3a1c00; }
+#targets-tbody tr.selected:not(.multi) td       { background: #2e1600; }
+#targets-tbody tr.selected:not(.multi):hover td { background: #3a1c00; }
+/* 2+ selected targets: each row tinted to match that target's curve/path
+   color (assets/app.js applyRowSelectionStyle), so the same target reads as
+   the same color in the table, the airmass plot, and the sky display. */
+#targets-tbody tr.selected.multi td       { background: var(--row-sel-bg); }
+#targets-tbody tr.selected.multi:hover td { background: var(--row-sel-bg-hover); }
 #targets-tbody tr.parse-error td    { color: var(--red); background: rgba(255,85,85,0.07); cursor: default; }
 #targets-tbody tr.parse-error:hover td { background: rgba(255,85,85,0.12); }
 
@@ -1457,12 +1497,37 @@ input.atf-invalid { border-color: #8a2020; background: #1a0808; }
   font-weight: bold;
   color: var(--purple);
   margin-left: 8px;
+  /* Multiple selected targets are comma-joined here, which can run long —
+     truncate instead of squeezing #airmass-date off the row. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .airmass-target-name:not(:empty)::before {
   content: '· ';
   opacity: 0.5;
   margin-right: 4px;
 }
+/* Parallactic-angle toggle, sitting next to the target name in the summary bar.
+   flex:none so it is never squeezed by a long comma-joined target-name list
+   (which is allowed to ellipsize instead — see .airmass-target-name). */
+.am-pa-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+  font-size: 0.7rem;
+  font-weight: bold;
+  letter-spacing: 0.04em;
+  color: var(--purple);
+  opacity: 0.75;
+  cursor: pointer;
+}
+.am-pa-toggle:hover { opacity: 1; }
+.am-pa-toggle input { cursor: pointer; margin: 0; }
+
 .airmass-date {
   margin-left: auto;
   font-size: 0.78rem;

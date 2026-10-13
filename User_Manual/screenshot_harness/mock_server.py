@@ -57,6 +57,7 @@ CAPTURE_WHITELIST = {
     'panel_telemetry.png', 'tab_edit.png', 'airmass_plot.png',
     'markers_dropdown.png', 'modal_browser_crop.png',
     'telemetry_header_connected.png', 'telemetry_header_disconnected.png',
+    'sky_path_tooltip.png',
 }
 
 
