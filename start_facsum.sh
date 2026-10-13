@@ -47,8 +47,39 @@ session_is_healthy() {
     curl -sf --max-time 3 "http://127.0.0.1:${LOCAL_PORT}/api.php?action=daemon_status" >/dev/null 2>&1
 }
 
+# Truncates any oversized webserver log in place. Safe to run against a file
+# php -S still has open for append: truncating (not deleting/renaming) resets
+# the length the kernel tracks for that open fd, so the process's very next
+# write starts the file over from empty instead of orphaning growth under a
+# path no script is watching anymore.
+#
+# This is a backstop, not the primary control — see the stderr filter on the
+# php -S launch below, which is what actually keeps these files small.
+#
+# It scans every webserver_*.log rather than just today's. The log filename is
+# fixed when php -S starts, and the "reuse if healthy" fast path keeps that
+# same process (and the same open fd) alive for days, so the file still being
+# appended to is usually named for some earlier date. An earlier version
+# checked only data/webserver_$(date +%Y-%m-%d).log, which on any day after
+# the server started matched a file that did not exist — so the cap never
+# fired on the file that was actually growing. Combined with the age prune
+# below being unable to help (a continuously-appended file's mtime is always
+# "now"), that is how three logs reached 489 MB between them.
+WEBSERVER_LOG_MAX_BYTES=$((20 * 1024 * 1024))  # 20 MB — generous for a single-observer tool's error log
+cap_remote_log_size() {
+    ssh -o BatchMode=yes -S "${SSH_SOCKET}" "${OBSERVER1_USER}@${OBSERVER1_HOST}" \
+        "cd ${OBSERVER1_DIR} || exit 0; \
+         for log in data/webserver_*.log; do \
+             [ -f \"\$log\" ] || continue; \
+             if [ \$(wc -c < \"\$log\") -gt ${WEBSERVER_LOG_MAX_BYTES} ]; then \
+                 : > \"\$log\"; echo \"  (truncated \$log — exceeded ${WEBSERVER_LOG_MAX_BYTES} bytes)\"; \
+             fi; \
+         done" 2>/dev/null
+}
+
 if session_is_healthy; then
     echo "Reusing existing Observer1 session."
+    cap_remote_log_size
 else
     echo "No healthy Observer1 session found -- starting fresh."
     # Tear down anything stale first: a dangling control socket from a
@@ -105,12 +136,32 @@ else
     # up and healthy. Pinning both sides to the same explicit address removes
     # the ambiguity instead of depending on how this box's resolver is ordered.
     # data/webserver_YYYY-MM-DD.log (dated + 14-day-pruned, same convention
-    # as tcs_daemon.py's own log): php -S's stdout/stderr used to go to a
-    # single ever-growing data/daemon.log -- date computed remotely (via the
-    # escaped \$(...)) so it reflects Observer1's own clock, not portal's.
+    # as tcs_daemon.py's own log) -- date computed remotely (via the escaped
+    # \$(...)) so it reflects Observer1's own clock, not portal's.
+    #
+    # php -S writes BOTH its access log and its error output to stderr; stdout
+    # gets nothing at all. An earlier version here had that backwards -- it
+    # sent stdout to /dev/null believing that was the access log, and stderr
+    # to the file "so only genuine errors land there". The effect was the
+    # opposite: every request logged three lines (Accepted / [200]: GET /
+    # Closing, ~184 bytes), and with the browser polling telemetry every
+    # 100 ms that is ~1.8 KB/s, ~159 MB/day of pure noise while connected.
+    #
+    # So stderr is filtered rather than redirected wholesale. Dropped:
+    # Accepted/Closing and any 2xx/3xx response line. Kept: the startup
+    # banner, "Failed to listen ..." (which the diagnostics below tail for),
+    # PHP warnings/fatals, and 4xx/5xx responses -- i.e. everything with
+    # diagnostic value. Measured: 63 requests -> 4 lines, 455 bytes.
+    #
+    # The filter runs inside one nohup'd sh so php and grep share a lifetime
+    # and survive this ssh session exiting; process substitution would be
+    # tied to the invoking shell and die with it. `exec` keeps php's command
+    # line exactly 'php -S 127.0.0.1:PORT' so the pkill -f -x above, the
+    # health check, and the ps diagnostics all still match it unchanged.
     echo "Starting Observer1 server..."
+    WEBSERVER_LOG_FILTER='(Accepted|Closing)$|\[(2[0-9][0-9]|3[0-9][0-9])\]: '
     ssh -o BatchMode=yes -S ${SSH_SOCKET} ${OBSERVER1_USER}@${OBSERVER1_HOST} \
-        "cd ${OBSERVER1_DIR} && { pkill -f -x 'php -S 127.0.0.1:${REMOTE_PORT}' 2>/dev/null; sleep 1; find data -maxdepth 1 -name 'webserver_*.log' -mtime +14 -delete 2>/dev/null; nohup php -S 127.0.0.1:${REMOTE_PORT} >> data/webserver_\$(date +%Y-%m-%d).log 2>&1 & disown; }"
+        "cd ${OBSERVER1_DIR} && { pkill -f -x 'php -S 127.0.0.1:${REMOTE_PORT}' 2>/dev/null; sleep 1; find data -maxdepth 1 -name 'webserver_*.log' -mtime +14 -delete 2>/dev/null; nohup sh -c \"exec php -S 127.0.0.1:${REMOTE_PORT} 2>&1 >/dev/null | grep --line-buffered -vE '${WEBSERVER_LOG_FILTER}' >> data/webserver_\\\$(date +%Y-%m-%d).log\" >/dev/null 2>&1 & disown; }"
 
     echo "Waiting for Observer1 server to come up..."
     server_up=0

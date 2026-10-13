@@ -144,65 +144,76 @@
   </div>
 
   <!-- Parse options strip -->
-  <div class="parse-strip" id="parse-strip">
+  <details class="parse-options-details" id="parse-options-details">
+    <summary class="parse-options-summary">Parsing Options</summary>
+    <div class="parse-strip" id="parse-strip">
 
-    <fieldset class="parse-group">
-      <legend>FILE TYPE</legend>
-      <label class="parse-radio"><input type="radio" name="ftype" value="auto" checked> Auto-detect</label>
-      <label class="parse-radio"><input type="radio" name="ftype" value="csv"> CSV</label>
-      <label class="parse-radio"><input type="radio" name="ftype" value="ptic"> PTIC</label>
-    </fieldset>
+      <fieldset class="parse-group">
+        <legend>FILE TYPE</legend>
+        <label class="parse-radio"><input type="radio" name="ftype" value="auto" checked> Auto-detect</label>
+        <label class="parse-radio"><input type="radio" name="ftype" value="csv"> CSV</label>
+        <label class="parse-radio"><input type="radio" name="ftype" value="ptic"> PTIC</label>
+      </fieldset>
 
-    <fieldset class="parse-group">
-      <legend>DELIMITER</legend>
-      <label class="parse-radio"><input type="radio" name="delim" value="auto" checked> Auto</label>
-      <label class="parse-radio"><input type="radio" name="delim" value=","> Comma</label>
-      <label class="parse-radio"><input type="radio" name="delim" value=";"> Semicolon</label>
-      <label class="parse-radio"><input type="radio" name="delim" value="\t"> Tab</label>
-      <label class="parse-radio"><input type="radio" name="delim" value=" "> Space</label>
-      <label class="parse-radio"><input type="radio" name="delim" value="other"> Other
-        <input type="text" id="delim-other" class="delim-other-input" maxlength="3" placeholder="|">
-      </label>
-    </fieldset>
+      <fieldset class="parse-group">
+        <legend>DELIMITER</legend>
+        <label class="parse-radio"><input type="radio" name="delim" value="auto" checked> Auto</label>
+        <label class="parse-radio"><input type="radio" name="delim" value=","> Comma</label>
+        <label class="parse-radio"><input type="radio" name="delim" value=";"> Semicolon</label>
+        <label class="parse-radio"><input type="radio" name="delim" value="tab"> Tab</label>
+        <label class="parse-radio"><input type="radio" name="delim" value=" "> Space</label>
+        <label class="parse-radio"><input type="radio" name="delim" value="other"> Other
+          <input type="text" id="delim-other" class="delim-other-input" maxlength="3" placeholder="|">
+        </label>
+      </fieldset>
 
-    <fieldset class="parse-group">
-      <legend>RATE UNITS</legend>
-      <select id="rate-units" class="rate-units-select">
-        <option value="pm">Proper Motion (0.0001s/yr, 0.001"/yr)</option>
-        <option value="track_as" selected>Non-sid Tracking (arcsec/hr, arcsec/hr)</option>
-        <option value="track_s">Non-sid Tracking (sec/hr, arcsec/hr)</option>
-      </select>
-      <label class="parse-radio apply-rates-label" id="apply-rates-label">
-        <input type="checkbox" id="apply-rates" checked>
-        Apply Rates
-      </label>
-    </fieldset>
+      <fieldset class="parse-group">
+        <legend>RATE UNITS</legend>
+        <select id="rate-units" class="rate-units-select">
+          <option value="pm">Proper Motion (0.0001s/yr, 0.001"/yr)</option>
+          <option value="track_as" selected>Non-sid Tracking (arcsec/hr, arcsec/hr)</option>
+          <option value="track_s">Non-sid Tracking (sec/hr, arcsec/hr)</option>
+        </select>
+        <label class="parse-radio apply-rates-label" id="apply-rates-label">
+          <input type="checkbox" id="apply-rates" checked>
+          Apply Rates
+        </label>
+      </fieldset>
 
-    <span id="parse-detected" class="parse-detected"></span>
-  </div>
+      <span id="parse-detected" class="parse-detected"></span>
+    </div>
+  </details>
 
   <div id="load-tcs-bar">
     <button id="load-tcs-btn" disabled>Load to Telescope</button>
   </div>
 
   <div class="tab-content" id="tab-table">
-    <div class="tbl-wrap">
+    <div class="target-search-bar">
+      <input type="text" id="target-search" placeholder="Filter targets by name…" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="tbl-wrap" id="tbl-wrap">
       <table id="targets-tbl" class="no-observed">
         <thead>
           <tr>
             <th class="obs-col" title="Mark as observed">✓</th>
-            <th data-col="name">Name</th>
-            <th data-col="ra">RA</th>
-            <th data-col="dec">Dec</th>
-            <th data-col="epoch">Epoch</th>
-            <th data-col="airmass">Airmass</th>
-            <th data-col="pmRA"  id="th-rate-ra">PM RA</th>
-            <th data-col="pmDec" id="th-rate-dec">PM Dec</th>
-            <th data-col="notes">Notes</th>
+            <th data-col="name" draggable="true">Name</th>
+            <th data-col="ra" draggable="true">RA</th>
+            <th data-col="dec" draggable="true">Dec</th>
+            <th data-col="epoch" draggable="true">Epoch</th>
+            <th data-col="airmass" draggable="true">Airmass</th>
+            <th data-col="pmRA"  id="th-rate-ra" draggable="true">PM RA</th>
+            <th data-col="pmDec" id="th-rate-dec" draggable="true">PM Dec</th>
+            <th data-col="propRA"  draggable="true">Prop RA (mas/yr)</th>
+            <th data-col="propDec" draggable="true">Prop Dec (mas/yr)</th>
+            <th data-col="notes" draggable="true">Notes</th>
           </tr>
         </thead>
         <tbody id="targets-tbody"></tbody>
       </table>
+    </div>
+    <div id="no-targets-placeholder" class="no-targets-placeholder hidden">
+      <button id="no-targets-btn" class="no-targets-btn">+ Load Target List</button>
     </div>
   </div>
 
@@ -258,7 +269,7 @@
       <div class="sky-bodies-drop" style="min-width:175px;padding:6px 10px;display:flex;flex-direction:column;gap:5px">
         <label class="parse-radio" style="display:flex;align-items:center;gap:6px;white-space:nowrap">
           Rotation&nbsp;
-          <input type="number" id="allsky-rotation" value="-13" step="0.5" min="-180" max="180"
+          <input type="number" id="allsky-rotation" value="-10.5" step="0.5" min="-180" max="180"
                  style="width:54px;background:#1a1a2e;border:1px solid #444;color:#ccc;border-radius:3px;padding:1px 4px;font-size:11px">
           °&nbsp;CW
         </label>
@@ -294,7 +305,7 @@
   <div id="resize-am-handle" class="resize-y-handle"></div>
 
   <details id="airmass-section" class="airmass-section" open>
-    <summary class="airmass-summary">AIRMASS PLOT<span id="airmass-target-name" class="airmass-target-name"></span><span id="airmass-date" class="airmass-date"></span></summary>
+    <summary class="airmass-summary">AIRMASS PLOT<span id="airmass-target-name" class="airmass-target-name"></span><label class="am-pa-toggle" id="am-pa-toggle"><input type="checkbox" id="am-show-pa"> Parallactic</label><span id="airmass-date" class="airmass-date"></span></summary>
     <div class="airmass-wrap">
       <canvas id="airmass-canvas"></canvas>
       <button id="am-home-btn" class="am-home-btn" title="Reset to current night">⌂</button>
