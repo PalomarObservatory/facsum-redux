@@ -1,0 +1,8 @@
+/* Inline color swatches, mirroring the .clr-* classes in the HTML manual. */
+.clr-green  { color: #2e8b57; font-weight: 600; }
+.clr-yellow { color: #a09010; font-weight: 600; }
+.clr-orange { color: #c97a2a; font-weight: 600; }
+.clr-red    { color: #b03030; font-weight: 600; }
+.clr-cyan   { color: #4da6c8; font-weight: 600; }
+.clr-purple { color: #7c5ca8; font-weight: 600; }
+.dimmed     { color: #777; font-style: italic; }

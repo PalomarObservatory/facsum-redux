@@ -49,3 +49,6 @@ id_dsa
 dist/
 target/
 out/
+
+# Sphinx docs build output
+docs/_build/
